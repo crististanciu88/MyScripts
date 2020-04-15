@@ -1,0 +1,33 @@
+Certainly! Below is a PowerShell script that will load an XML file structured as you described, loop through each Shortcut element, and extract the Description for the Shortcut with the Name "Latest RiskEngine Batch".
+
+Here's the complete PowerShell script:
+
+```powershell
+# Define the path to your XML file
+$xmlFilePath = "C:\path\to\your\shortcuts.xml"
+
+# Load the XML file
+[xml]$xmlContent = Get-Content -Path $xmlFilePath
+
+# Define the namespace for the XML structure
+$namespace = @{ adt = "http://adt.server" }
+
+# Initialize a variable to hold the Description value
+$latestDescription = $null
+
+# Loop through each Shortcut in the XML
+foreach ($shortcut in $xmlContent.ArrayofShortcut.Shortcut) {
+    # Check if the Name matches "Latest RiskEngine Batch"
+    if ($shortcut.Name -eq "Latest RiskEngine Batch") {
+        # Extract the Description
+        $latestDescription = $shortcut.Description
+        break  # Exit loop once found
+    }
+}
+
+# Output the result
+if ($latestDescription) {
+    Write-Host "Description for 'Latest RiskEngine Batch': $latestDescription"
+} else {
+    Write-Host "Shortcut 'Latest RiskEngine Batch' not found."
+}

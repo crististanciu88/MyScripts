@@ -1,0 +1,68 @@
+my-job:
+  script:
+    - |
+      $versionToReplace = "14.2.0.1401"
+      $newVersion = "1.0.0"
+
+      $packagesConfigPath = "packages.config"
+      $packagesConfig = Get-Content -Path $packagesConfigPath
+
+      $pattern = '<package id="FFLib" version="[^"]+" />'
+      $updatedPackagesConfig = $packagesConfig -replace $pattern, ('<package id="FFLib" version="{0}" />' -f $newVersion)
+
+      $updatedPackagesConfig | Set-Content -Path $packagesConfigPath
+
+
+
+my-job:
+  stage: my-stage
+  script:
+    - |
+      $accessToken = "<your_access_token>"
+      $repoId = "<repository_id>"
+      $branchName = "<branch_name>"
+      $variableKey = "<variable_key>"
+      
+      $apiUrl = "https://gitlab.com/api/v4/projects/$repoId/variables/$variableKey"
+      $headers = @{
+        "PRIVATE-TOKEN" = $accessToken
+      }
+      
+      $response = Invoke-RestMethod -Uri $apiUrl -Headers $headers
+      $variableValue = $response.value
+      
+      Write-Host "Extracted variable value: $variableValue"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "external" && $CI_PROJECT_PATH == "my-group/my-repo-a"'
+    
+    
+    stages:
+  - build
+  - test
+
+my-job:
+  stage: build
+  script:
+    - echo "Building..."
+  rules:
+    - exists: true
+      when: manual
+    - exists: true
+      changes:
+        - '*'
+      except:
+        - /.*rel.*/
+
+another-job:
+  stage: test
+  script:
+    - echo "Testing..."
+my-job:
+  script:
+    - |
+      $envFile = Get-Content -Path "build.env"
+      foreach ($line in $envFile) {
+        $key, $value = $line -split '=', 2
+        $env:$key = $value
+      }
+

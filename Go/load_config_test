@@ -1,0 +1,163 @@
+package yourpackage
+
+import (
+    "encoding/json"
+    "io/ioutil"
+    "os"
+    "path/filepath"
+    "testing"
+)
+
+// Function to create a temporary JSON config file for testing
+func createTempConfigFile(content string) (string, error) {
+    tmpFile, err := ioutil.TempFile("", "test_config_*.json")
+    if err != nil {
+        return "", err
+    }
+    if _, err := tmpFile.Write([]byte(content)); err != nil {
+        return "", err
+    }
+    tmpFile.Close()
+    return tmpFile.Name(), nil
+}
+
+// Compare the contents of two Config structs for equality
+func CompareConfigs(a, b Config) bool {
+    if len(a.SecretsToRotate) != len(b.SecretsToRotate) {
+        return false
+    }
+    for i := range a.SecretsToRotate {
+        if a.SecretsToRotate[i] != b.SecretsToRotate[i] {
+            return false
+        }
+    }
+
+    return a.Namespace == b.Namespace &&
+        a.EvaVaultURL == b.EvaVaultURL &&
+        a.SvcAccount == b.SvcAccount &&
+        a.RuntimeCert == b.RuntimeCert &&
+        a.RuntimeKey == b.RuntimeKey &&
+        a.RuntimeSvcAccount == b.RuntimeSvcAccount &&
+        a.DeploySvcAccount == b.DeploySvcAccount &&
+        a.DeployCert == b.DeployCert &&
+        a.DeployKey == b.DeployKey &&
+        a.EvaApiURL == b.EvaApiURL &&
+        a.AzTenantID == b.AzTenantID &&
+        len(a.EvaUsers) == len(b.EvaUsers) && 
+        func() bool { 
+            for i := range a.EvaUsers {
+                if a.EvaUsers[i] != b.EvaUsers[i] {
+                    return false
+                }
+            }
+            return true
+        }()
+}
+
+// TestLoadConfig tests the LoadConfig function.
+func TestLoadConfig(t *testing.T) {
+    originalEnv := os.Getenv("ENV")
+    defer os.Setenv("ENV", originalEnv) // Restore original ENV
+
+    // Get the current executable directory
+    exePath, err := os.Executable()
+    if err != nil {
+        t.Fatalf("Failed to get executable path: %v", err)
+    }
+    exeDir := filepath.Dir(exePath)
+
+    tests := []struct {
+        env            string
+        configContent  string
+        expectError    bool
+        expectedConfig *Config
+    }{
+        {
+            env: "test",
+            configContent: `{
+                "SecretsToRotate": ["secret1", "secret2"],
+                "Namespace": "testNamespace",
+                "EvaVaultURL": "http://example.com/vault",
+                "EvaUsers": [{"User": "alice", "VaultPath": "/path/to/alice", "Domain": "domain.com"}],
+                "SvcAccount": "testAccount",
+                "RuntimeCert": "testCert",
+                "RuntimeKey": "testKey",
+                "RuntimeSvcAccount": "testRuntimeSvcAccount",
+                "DeploySvcAccount": "testDeploySvcAccount",
+                "DeployCert": "testDeployCert",
+                "DeployKey": "testDeployKey",
+                "EvaApiURL": "http://example.com/api",
+                "AzTenantID": "azure-tenant-id"
+            }`,
+            expectError: false,
+            expectedConfig: &Config{
+                SecretsToRotate:  []string{"secret1", "secret2"},
+                Namespace:        "testNamespace",
+                EvaVaultURL:     "http://example.com/vault",
+                EvaUsers:        []EvaUser{{User: "alice", VaultPath: "/path/to/alice", Domain: "domain.com"}},
+                SvcAccount:      "testAccount",
+                RuntimeCert:     "testCert",
+                RuntimeKey:      "testKey",
+                RuntimeSvcAccount: "testRuntimeSvcAccount",
+                DeploySvcAccount: "testDeploySvcAccount",
+                DeployCert:      "testDeployCert",
+                DeployKey:       "testDeployKey",
+                EvaApiURL:      "http://example.com/api",
+                AzTenantID:      "azure-tenant-id",
+            },
+        },
+        {
+            env:         "missing", // Test case for a missing config file
+            expectError: true,
+        },
+        {
+            env: "invalid", // Test case for invalid JSON
+            configContent: `{"invalid_json": true`,
+            expectError:  true,
+        },
+    }
+
+    for _, test := range tests {
+        t.Run(test.env, func(t *testing.T) {
+            var configFilePath string
+            if test.env != "missing" {
+                var err error
+                // Create the temporary config file
+                configFilePath, err = createTempConfigFile(test.configContent)
+                if err != nil {
+                    t.Fatalf("Failed to create temp config file: %v", err)
+                }
+                defer os.Remove(configFilePath) // Clean up the temp file
+
+                // Copy the temporary config file to the executable's directory
+                targetPath := filepath.Join(exeDir, "test.json")
+                if err = os.Rename(configFilePath, targetPath); err != nil {
+                    t.Fatalf("Failed to move config file: %v", err)
+                }
+                defer os.Remove(targetPath) // Clean up the config file after the test
+
+                // Set the environment variable for the test
+                os.Setenv("ENV", "test")
+            }
+
+            // Call LoadConfig with the correct executable path
+            config, err := LoadConfig(exePath)
+
+            if test.expectError {
+                if err == nil {
+                    t.Errorf("Expected error but got none")
+                }
+                return // Stop further checks if an error was expected
+            }
+
+            if err != nil {
+                t.Fatalf("Did not expect to fail: %v", err)
+            }
+
+            // Use CompareConfigs function to compare results
+            if !CompareConfigs(*config, *test.expectedConfig) {
+                t.Errorf("Expected config %+v, but got %+v", *test.expectedConfig, *config)
+            }
+        })
+    }
+}

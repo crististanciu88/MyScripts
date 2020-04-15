@@ -1,0 +1,37 @@
+# Define the source folder and files to be copied
+$sourceFolder = "\\network\folder\libs"
+$libsToCopy = @("lib1.dll", "lib2.dll", "lib3.dll")
+
+# Define the destination folder on the servers
+$destinationFolder = "C:\Destination\Folder"
+
+# Define the list of servers
+$servers = @("Server1", "Server2", "Server3") # Add more server names as needed
+
+# Define the service name to be restarted
+$servicePrefix = "mcollective"
+
+# Loop through each server
+foreach ($server in $servers) {
+    # Stop the service
+    $serviceName = Get-Service -ComputerName $server | Where-Object { $_.DisplayName -like "$servicePrefix*" }
+    
+    if ($serviceName -ne $null) {
+        Write-Host "Stopping $serviceName on $server..."
+        Invoke-Command -ComputerName $server -ScriptBlock { Stop-Service -Name $using:serviceName -Force } -Credential (Get-Credential)
+        
+        # Wait for the service to stop
+        Start-Sleep -Seconds 5
+    }
+
+    # Copy each lib to the destination folder on the server
+    foreach ($lib in $libsToCopy) {
+        Copy-Item -Path "$sourceFolder\$lib" -Destination "\\$server\$destinationFolder" -Force
+    }
+
+    # Start the service back
+    if ($serviceName -ne $null) {
+        Write-Host "Starting $serviceName on $server..."
+        Invoke-Command -ComputerName $server -ScriptBlock { Start-Service -Name $using:serviceName } -Credential (Get-Credential)
+    }
+}

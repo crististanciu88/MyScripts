@@ -1,0 +1,80 @@
+```powershell
+# Define the path to setup.exe and uninstall.xml
+$setupPath = "C:\Path\To\Your\Office\Setup.exe"  # Update this to the path of Office setup.exe
+$configPath = "C:\Path\To\Your\uninstall.xml"   # Update this to the path of your config XML file
+
+# Check if Office 2016 is installed by querying the registry
+$officeInstalled = Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall |
+                   Where-Object { $_.GetValue("DisplayName") -like "*Microsoft Office*2016*" }
+
+if ($officeInstalled) {
+    Write-Host "Microsoft Office 2016 is installed. Proceeding with uninstallation."
+
+    # Construct the uninstall arguments
+    $arguments = "/uninstall ProPlus /config `"$configPath`""
+
+    # Redirect output and error to temporary files
+    $outputPath = [System.IO.Path]::GetTempFileName()
+    $errorPath = [System.IO.Path]::GetTempFileName()
+
+    # Perform the uninstallation
+    Start-Process -FilePath $setupPath -ArgumentList $arguments -NoNewWindow -RedirectStandardOutput $outputPath -RedirectStandardError $errorPath -Wait
+
+    # Wait for a moment to ensure the process writes to the files
+    Start-Sleep -Seconds 2
+
+    # Read and display the output and error logs
+    $processOutputContent = Get-Content $outputPath
+    $processErrorContent = Get-Content $errorPath
+
+    # Output the results
+    Write-Host "Output:"
+    Write-Host $processOutputContent
+    Write-Host "Errors (if any):"
+    Write-Host $processErrorContent
+
+    Write-Host "Office 2016 uninstallation process has been completed."
+} else {
+    Write-Host "Microsoft Office 2016 is not installed on this system."
+}
+
+
+
+```batch
+@echo off
+setlocal
+
+:: Define the path to the setup.exe and uninstall.xml
+set "officeSetupPath=C:\Path\To\Your\Office\setup.exe"
+set "uninstallXmlPath=C:\Path\To\Your\Office\uninstall.xml"
+
+:: Check if Office 2016 is installed
+echo Checking for Office 2016 installation...
+
+:: Using WMIC to check for installation
+wmic product where "name like 'Microsoft Office%2016%'" get name > temp.txt
+
+:: Check if uninstall was found
+find "Microsoft Office" temp.txt > nul
+if %errorlevel% neq 0 (
+    echo Office 2016 is not installed.
+    del temp.txt
+    exit /b 0
+)
+
+echo Office 2016 is installed. Proceeding with uninstallation.
+
+:: Run the uninstall command and redirect output to a log file
+echo Uninstalling Office 2016...
+"%officeSetupPath%" /uninstall ProPlus /config "%uninstallXmlPath%" > uninstall_log.txt 2>&1
+
+:: Check if the uninstall command was successful
+if %errorlevel% eq 0 (
+    echo Office 2016 uninstalled successfully.
+) else (
+    echo Failed to uninstall Office 2016. Check uninstall_log.txt for details.
+)
+
+:: Clean up
+del temp.txt
+exit /b

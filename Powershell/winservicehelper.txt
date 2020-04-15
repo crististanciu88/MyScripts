@@ -1,0 +1,85 @@
+# Load the XML file
+$xmlPath = "C:\Users\Admin\Desktop\test.xml"
+$xml = [xml](Get-Content $xmlPath)
+
+# Define the environment and instance you want to configure
+$environment = 'prod'
+$instance = 'DEFAULT'
+
+# Find the environment node for the specified environment
+$environmentNode = $xml.Config.Environment | Where-Object { $_.name -eq $environment }
+
+if ($environmentNode) {
+    if ($instance) {
+        # Check if the specified instance is present in the environment node
+        $instanceNode = $environmentNode.Instance | Where-Object { $_.name -eq $instance }
+        if ($instanceNode) {
+            # Extract configuration values for the specified instance
+            $servicePath = $instanceNode.ServicePath
+            $serviceName = $instanceNode.ServiceName
+            $startupType = $instanceNode.StartupType
+            $startService = $instanceNode.StartService
+            $userName = $instanceNode.UserName
+            $password = $instanceNode.Password
+        } else {
+            Write-Host "Instance '$instance' not found in the environment '$environment'. Using default environment configuration."
+            # Extract configuration values for the specified environment
+            $servicePath = $environmentNode.ServicePath
+            $serviceName = $environmentNode.ServiceName
+            $startupType = $environmentNode.StartupType
+            $startService = $environmentNode.StartService
+            $userName = $environmentNode.UserName
+            $password = $environmentNode.Password
+        }
+    } else {
+        # Extract configuration values for the specified environment
+        $servicePath = $environmentNode.ServicePath
+        $serviceName = $environmentNode.ServiceName
+        $startupType = $environmentNode.StartupType
+        $startService = $environmentNode.StartService
+        $userName = $environmentNode.UserName
+        $password = $environmentNode.Password
+    }
+
+    # Output the variables for verification
+    Write-Host "ServicePath: $servicePath"
+    Write-Host "ServiceName: $serviceName"
+    Write-Host "StartupType: $startupType"
+    Write-Host "StartService: $startService"
+    Write-Host "UserName: $userName"
+    # You may not want to display the password in clear text
+    # Write-Host "Password: $password"
+} else {
+    Write-Host "Environment '$environment' not found in the XML."
+}
+
+
+<?xml version="1.0" encoding="UTF-8"?>
+<Config>
+    <Environment name="dev">
+	  <Instance name="Instance1">
+        <ServicePath>C:\MyService\bin\dev1\MyService.exe</ServicePath>
+        <ServiceName>MyService_DEV</ServiceName>
+        <StartupType>Automatic</StartupType>
+        <StartService>True</StartService>
+        <UserName>svc_user</UserName>
+        <Password>svc_password</Password>
+	  </Instance>
+	  <Instance name="Instance2">
+        <ServicePath>C:\MyService\bin\dev2\MyService.exe</ServicePath>
+        <ServiceName>MyService_DEV</ServiceName>
+        <StartupType>Automatic</StartupType>
+        <StartService>True</StartService>
+        <UserName>svc_user</UserName>
+        <Password>svc_password</Password>
+	  </Instance>
+    </Environment>
+    <Environment name="prod">
+        <ServicePath>C:\MyService\bin\prod\MyService.exe</ServicePath>
+        <ServiceName>MyService_PROD</ServiceName>
+        <StartupType>Automatic</StartupType>
+        <StartService>True</StartService>
+        <UserName>svc_user</UserName>
+        <Password>svc_password</Password>
+    </Environment>
+</Config>

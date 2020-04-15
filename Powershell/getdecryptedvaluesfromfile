@@ -1,0 +1,36 @@
+function Decrypt-String {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$EncryptedString,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Algorithm = "Rijndael"
+    )
+
+    $keyBytes = [System.Text.Encoding]::UTF8.GetBytes($Key)
+    $encryptedBytes = [System.Convert]::FromBase64String($EncryptedString)
+
+    $algorithm = [System.Security.Cryptography.SymmetricAlgorithm]::Create($Algorithm)
+    $algorithm.Key = $keyBytes
+
+    $iv = New-Object byte[] $algorithm.IV.Length
+    $algorithm.IV.CopyTo($iv, 0)
+
+    $decryptor = $algorithm.CreateDecryptor($keyBytes, $iv)
+    $plainBytes = $decryptor.TransformFinalBlock($encryptedBytes, 0, $encryptedBytes.Length)
+
+    $plainText = [System.Text.Encoding]::UTF8.GetString($plainBytes)
+    return $plainText.TrimEnd([char]0)
+}
+
+# Example usage:
+$encryptedString = "7XNN72LHpmew6v40g6ndzV7PrjIWq4u/z7vJo8DQWcQ="
+$key = "mysecretkey"
+$algorithm = "Rijndael"
+
+$decryptedString = Decrypt-String -EncryptedString $encryptedString -Key $key -Algorithm $algorithm
+Write-Host "Decrypted string: $decryptedString"
+

@@ -1,0 +1,36 @@
+# Replace these values with your GitLab details
+$gitLabBaseUrl = "https://your-gitlab-instance"
+$projectId = "your-project-id"
+$token = "your-personal-access-token"
+
+# Define pipeline variables
+$variables = @{
+    "VAR1" = "value1";
+    "VAR2" = "value2";
+}
+
+# Create the API endpoint URL
+$apiUrl = "$gitLabBaseUrl/api/v4/projects/$projectId/trigger/pipeline"
+
+# Define the trigger token (you need to set this up in your GitLab project settings)
+$triggerToken = "your-trigger-token"
+
+# Construct the payload with variables
+$payload = @{
+    "token" = $triggerToken
+    "ref" = "main"  # Replace with the branch or tag you want to trigger the pipeline on
+    "variables" = $variables
+} | ConvertTo-Json
+
+# Set headers with authorization
+$headers = @{
+    "PRIVATE-TOKEN" = $token
+    "Content-Type" = "application/json"
+}
+
+# Trigger the pipeline
+$response = Invoke-RestMethod -Uri $apiUrl -Method Post -Headers $headers -Body $payload
+
+# Display the response
+Write-Host "Pipeline triggered. Response:"
+$response

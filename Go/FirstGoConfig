@@ -1,0 +1,22 @@
+{
+    "UAT": {
+        "UamiName": "your-azure-uami-role-uat",
+        "UamiID": "your-azure-uami-id-uat",
+        "Namespace": "your-namespace-uat",
+        "EvaUrl": "https://vault.net/v1",
+        "EvaSecrets": [
+            "secret/data/runtime//secret",
+            "secret/data/runtime/another-secret"
+        ]
+    },
+    "PROD": {
+        "UamiName": "your-azure-uami-role-prod",
+        "UamiID": "your-azure-uami-id-prod",
+        "Namespace": "your-namespace-prod",
+        "EvaUrl": "https://vault.net/v1",
+        "EvaSecrets": [
+            "secret/data/runtime/prod-secret",
+            "secret/data/runtime/another-prod-secret"
+        ]
+    }
+}

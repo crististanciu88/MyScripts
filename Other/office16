@@ -1,0 +1,17 @@
+- name: Check if Office 2016 was previously installed
+  ansible.windows.win_stat:
+    path: "{{ packageDownloadPath }}\\office_2016.mrk"
+  register: office_mrk_rc
+
+- name: Uninstall Office 2016 if it was installed
+  when: office_mrk_rc.stat.exists
+  ansible.windows.win_package:
+    name: 'Microsoft Office Professional Plus 2016'
+    state: absent
+
+- name: Remove Office 2016 marker file
+  when: office_mrk_rc.stat.exists
+  ansible.windows.win_file:
+    path: "{{ packageDownloadPath }}\\office_2016.mrk"
+    state: absent
+```

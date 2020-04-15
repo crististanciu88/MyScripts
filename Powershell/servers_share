@@ -1,0 +1,40 @@
+# List of Windows servers
+$servers = @("Server1", "Server2", "Server3")  # Add your server names here
+
+# Define the share names and their respective paths
+$shares = @{
+    "C" = "C:\"
+    "D" = "D:\"
+}
+
+# Define the group for permissions
+$group = "testdomain\testgroup"
+
+# Iterate through each server
+foreach ($server in $servers) {
+    Write-Host "Processing server: $server"
+
+    Invoke-Command -ComputerName $server -ScriptBlock {
+        param($shares, $group)
+
+        foreach ($shareName in $shares.Keys) {
+            $sharePath = $shares[$shareName]
+
+            # Check if the share exists
+            $share = Get-SmbShare -Name $shareName -ErrorAction SilentlyContinue
+            if ($share -eq $null) {
+                # Create the share if it doesn't exist
+                Write-Host "Creating share $shareName with path $sharePath"
+                New-SmbShare -Name $shareName -Path $sharePath -FullAccess SYSTEM -ReadAccess Everyone
+            } else {
+                Write-Host "Share $shareName already exists"
+            }
+
+            # Grant the group read access to the SMB share
+            Write-Host "Granting read access to $group on share $shareName"
+            Grant-SmbShareAccess -Name $shareName -AccountName $group -AccessRight Read -Force
+        }
+    } -ArgumentList $shares, $group
+}
+
+Write-Host "Processing completed for all servers."

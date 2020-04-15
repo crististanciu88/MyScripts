@@ -1,0 +1,27 @@
+function Get-DotNetFrameworkVersion {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string[]]$ServerList
+    )
+
+    $results = @()
+
+    foreach ($Server in $ServerList) {
+        try {
+            $DotNetVersions = Get-WmiObject -Class Win32_Product | Where-Object { $_.Name -like 'Microsoft .NET*' -and $_.__SERVER -eq $Server } | Select-Object -Property Name, Version
+            foreach ($Version in $DotNetVersions) {
+                $result = New-Object PSObject -Property @{
+                    ServerName = $Server
+                    '.NET Package Name' = $Version.Name
+                    '.NET Version' = $Version.Version
+                }
+                $results += $result
+            }
+        } catch {
+            Write-Host "Error occurred while querying $Server: $_"
+        }
+    }
+
+    $results | Format-Table -AutoSize
+}

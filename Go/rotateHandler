@@ -1,0 +1,23 @@
+// rotateHandler processes the rotation request
+func (s *Server) rotateHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var rotateRequest RotateRequest
+	if err := json.NewDecoder(r.Body).Decode(&rotateRequest); err != nil {
+		s.logger.Error("Failed to decode request body", zap.Error(err))
+		http.Error(w, "Failed to decode request", http.StatusBadRequest)
+		return
+	}
+
+	// Trigger the rotation process with the overridden EvaSecrets
+	config := &rotator.Config{SecretsToRotate: rotateRequest.EvaSecrets} // Create a config with the overridden secrets
+
+	// Run the rotation task.
+	RunTask(s.logger, config) // Make sure to pass the correct logger
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("Rotation task triggered"))
+}

@@ -1,0 +1,66 @@
+function DisableProtectedView {
+    param (
+        [string]$server
+    )
+
+    $scriptBlock = {
+        $officeRegistryPath = "HKCU:\Software\Microsoft\Office\{0}\Common\General"
+        $officeVersions = @("16.0", "15.0", "14.0")
+
+        foreach ($version in $officeVersions) {
+            $officePath = $officeRegistryPath -f $version
+
+            # Create or update the registry key
+            New-Item -Path $officePath -Force | Out-Null
+
+            # Set the registry values to disable Protected View
+            Set-ItemProperty -Path $officePath -Name "DisableHardwareAcceleration" -Value 1
+            Set-ItemProperty -Path $officePath -Name "TrustedDocuments" -Value 1
+            Set-ItemProperty -Path $officePath -Name "Security" -Value 1
+        }
+
+        Write-Host "Protected View disabled for Microsoft Office applications."
+    }
+
+    Invoke-Command -ComputerName $server -ScriptBlock $scriptBlock
+}
+
+function GetProtectedView {
+    param (
+        [string]$server
+    )
+
+    $scriptBlock = {
+        $hkcuPath = "HKCU:\"
+        $subkeys = Get-Item -LiteralPath $hkcuPath | Get-ItemProperty | Select-Object -ExpandProperty PSChildName
+
+        $registrySettings = @()
+
+        foreach ($subkey in $subkeys) {
+            $registryPath = "$hkcuPath$subkey\Software\Microsoft\Office\{0}\Common\General"
+            $officeVersions = @("16.0", "15.0", "14.0")
+
+            foreach ($version in $officeVersions) {
+                $officePath = $registryPath -f $version
+
+                $settings = @{
+                    User = $subkey
+                    Version = $version
+                    DisableHardwareAcceleration = (Get-ItemProperty -Path $officePath -Name "DisableHardwareAcceleration" -ErrorAction SilentlyContinue)?.DisableHardwareAcceleration
+                    TrustedDocuments = (Get-ItemProperty -Path $officePath -Name "TrustedDocuments" -ErrorAction SilentlyContinue)?.TrustedDocuments
+                    Security = (Get-ItemProperty -Path $officePath -Name "Security" -ErrorAction SilentlyContinue)?.Security
+                }
+
+                $registrySettings += New-Object PSObject -Property $settings
+            }
+        }
+
+        $registrySettings
+    }
+
+    Invoke-Command -ComputerName $server -ScriptBlock $scriptBlock
+}
+
+# Example usage:
+# DisableProtectedView -server "RemoteServerName"
+# GetProtectedView -server "RemoteServerName"222

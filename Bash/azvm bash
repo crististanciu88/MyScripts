@@ -1,0 +1,1 @@
+az vm run-command invoke --resource-group yourResourceGroupName --name yourVMName --command-id RunPowerShellScript --scripts "Get-WmiObject -Query 'SELECT * FROM Win32_Product WHERE Name LIKE \"%Microsoft Office Professional Plus 2016%\"' | If (\$?) { Write-Output 'Office 2016 Professional is installed.' } Else { Write-Output 'Office 2016 Professional is NOT installed.' }"
