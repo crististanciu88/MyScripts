@@ -1,0 +1,28 @@
+
+$servers = @("Server1", "Server2", "Server3")  # Replace with your server names
+$vc2022Installed = "Microsoft Visual C++ 2022 Redistributable (x64)"
+$dotNet48Key = "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"
+
+foreach ($server in $servers) {
+    try {
+        # Check for Visual C++ 2022
+        $vc2022 = Get-WmiObject -Class Win32_Product -ComputerName $server | Where-Object { $_.Name -eq $vc2022Installed }
+
+        if ($vc2022) {
+            Write-Host "$server: Visual C++ 2022 is installed."
+        } else {
+            Write-Host "$server: Visual C++ 2022 is NOT installed."
+        }
+
+        # Check for .NET Framework 4.8
+        $dotNetVersion = Get-ItemProperty -Path $dotNet48Key -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Release
+        
+        if ($dotNetVersion -ge 528040) {
+            Write-Host "$server: .NET Framework 4.8 is installed."
+        } else {
+            Write-Host "$server: .NET Framework 4.8 is NOT installed."
+        }
+    } catch {
+        Write-Host "$server: Error accessing server. $_"
+    }
+}
