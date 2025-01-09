@@ -1,0 +1,72 @@
+# Function to parse each JIL block and extract relevant information
+function Parse-JilBlock {
+    param (
+        [string]$jilBlock
+    )
+
+    # Use a hashtable to collect all attributes found in the block
+    $attributes = @{}
+
+    # Variable to store job name (insert job)
+    $jobName = $null
+
+    # Split lines and process each line to capture key-value pairs
+    $lines = $jilBlock -split "`n"
+    foreach ($line in $lines) {
+        # Trim the line and ignore empty lines
+        $line = $line.Trim()
+        if ($line -ne '') {
+            # Extract job name from insert_job line
+            if ($line -match '^\s*insert_job:\s*(\S+)') {
+                $jobName = $matches[1].Trim()
+            }
+
+            # Match key-value pairs
+            if ($line -match '^\s*(\S+):\s*(.+)') {
+                $key = $matches[1].Trim()
+                $value = $matches[2].Trim()
+                $attributes[$key] = $value
+            }
+        }
+    }
+
+    # Add the job name (insert_job) as a new attribute
+    if ($jobName -ne $null) {
+        $attributes['insert_job'] = $jobName
+    }
+
+    return $attributes
+}
+
+# Main processing function
+function Process-Jils {
+    param (
+        [string]$filePath,
+        [string]$outputCsv
+    )
+
+    # Read the entire file content
+    $content = Get-Content -Path $filePath -Raw
+
+    # Split into separate JIL blocks based on 'insert_job' keyword
+    $jilBlocks = $content -split 'insert_job:'
+
+    $jobsData = @()  # Array to hold job data objects
+    foreach ($block in $jilBlocks) {
+        if ($block.Trim().Length -gt 0) {  # Process non-empty blocks
+            $jilInfo = Parse-JilBlock -jilBlock $block
+            if ($jilInfo.Count -gt 0) {
+                $jobsData += [PSCustomObject]$jilInfo  # Convert hashtable to PSCustomObject
+            }
+        }
+    }
+
+    # Output the results in a table format
+    $jobsData | Format-Table -AutoSize
+
+    # Export the results to a CSV file
+    $jobsData | Export-Csv -Path $outputCsv -NoTypeInformation -Encoding UTF8
+}
+
+# Run the script with the specified file path and output CSV file path
+Process-Jils -filePath 'your_jil_file.jil' -outputCsv 'output.csv'
