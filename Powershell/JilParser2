@@ -7,32 +7,28 @@ function Parse-JilBlock {
     # Use a hashtable to collect all attributes found in the block
     $attributes = @{}
 
-    # Variable to store job name (insert job)
-    $jobName = $null
-
     # Split lines and process each line to capture key-value pairs
     $lines = $jilBlock -split "`n"
     foreach ($line in $lines) {
         # Trim the line and ignore empty lines
         $line = $line.Trim()
         if ($line -ne '') {
-            # Extract job name from insert_job line
-            if ($line -match '^\s*insert_job:\s*(\S+)') {
-                $jobName = $matches[1].Trim()
-            }
-
-            # Match key-value pairs
+            # Match key-value pairs for all fields
             if ($line -match '^\s*(\S+):\s*(.+)') {
                 $key = $matches[1].Trim()
                 $value = $matches[2].Trim()
-                $attributes[$key] = $value
+
+                # If key is 'insert_job', store it separately for output
+                if ($key -eq 'insert_job') {
+                    $attributes[$key] = $value
+                }
+
+                # Store other attributes
+                else {
+                    $attributes[$key] = $value
+                }
             }
         }
-    }
-
-    # Add the job name (insert_job) as a new attribute
-    if ($jobName -ne $null) {
-        $attributes['insert_job'] = $jobName
     }
 
     return $attributes
@@ -48,8 +44,9 @@ function Process-Jils {
     # Read the entire file content
     $content = Get-Content -Path $filePath -Raw
 
-    # Split into separate JIL blocks based on 'insert_job' keyword
-    $jilBlocks = $content -split 'insert_job:'
+    # Split into separate JIL blocks based on the 'insert_job:' line
+    # Include 'insert_job:' in the split
+    $jilBlocks = $content -split '(?=insert_job:)'
 
     $jobsData = @()  # Array to hold job data objects
     foreach ($block in $jilBlocks) {
