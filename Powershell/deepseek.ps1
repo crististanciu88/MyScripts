@@ -8,11 +8,19 @@ $html = @"
     <title>Server Services Report</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
-        #searchInput { margin-bottom: 10px; padding: 5px; width: 300px; }
         table { border-collapse: collapse; width: 100%; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background-color: #f2f2f2; }
         tr:hover { background-color: #f5f5f5; }
+        /* Custom CSS for search bar */
+        .dataTables_filter {
+            float: left !important; /* Move search bar to the left */
+            margin-bottom: 10px; /* Add some spacing */
+        }
+        .dataTables_filter input {
+            padding: 5px;
+            width: 300px;
+        }
     </style>
     <!-- Add DataTables for enhanced search and sorting -->
     <link rel="stylesheet" type="text/css" href="https://cdn.datatables.net/1.11.5/css/jquery.dataTables.css">
@@ -52,14 +60,14 @@ $html += @"
         `$(document).ready(function() {
             `$('#servicesTable').DataTable({
                 "paging": false,
-                "info": false
+                "info": false,
+                "dom": '<"top"f>rt<"bottom"lp><"clear">' // Custom placement of search bar
             });
         });
     </script>
 </body>
 </html>
 "@
-
 
 # 5. Save to File
 $html | Out-File -FilePath "D:\output2.html"
