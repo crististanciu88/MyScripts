@@ -1,0 +1,60 @@
+# Autosys Job Management Repository
+This repository is dedicated to managing Autosys jobs for various environments (DEV, UAT, and PROD).
+
+## Table of Contents
+
+1. [Folder Structure](#folder-structure)
+2. [Adding or Modifying Jobs](#adding-or-modifying-jobs)
+3. [CI/CD Pipeline](#cicd-pipeline)
+4. [Deployment Workflow](#deployment-workflow)
+
+
+## Artifact Structure
+
+```
+Autosys/
+   ├── ILD/          # Autosys jobs for 'ILD' environment (DEV)
+   │   ├── jobs.jil
+   │   ├── variables.jil
+   ├── IUT/          # Autosys jobs for 'IUT' environment (UAT)
+   │   ├── jobs.jil  
+   │   ├── variables.jil  
+   └── IL2/          # Autosys jobs for 'IL2' environment (PROD)
+       ├── jobs.jil  
+       ├── variables.jil  
+
+
+jobs.jil       ->  Job definitions
+variables.jil  ->  Variables for jobs
+```
+
+## Adding or Modifying Jobs
+
+To add or modify jobs, follow these steps:
+
+1. **Clone the Repository**: Make sure you have Git installed and clone the repository to your local machine.
+
+2. **Navigate to the Correct Environment**: 
+   Choose the appropriate folder (ILD, IUT, or IL2) based on the environment you are working in.
+
+3. **Edit the `jobs.jil` File**:
+   - Use a text editor to modify or create job definitions in the `jobs.jil` file for the specified environment.
+   - Follow the Autosys syntax and conventions for defining jobs to ensure correctness.
+
+4. **Edit the `variables.jil` File**:
+   - Similar to the `jobs.jil` file, modify or add necessary variables in the `variables.jil` file.
+
+5. **Push Your Changes**:
+
+6. **Create a Merge Request**: 
+   Go to the GitLab UI and create a Merge Request for your changes. Ensure that reviewers understand the changes you're proposing.
+
+## CI/CD Pipeline
+
+1. **Build and Nexus Upload**:
+   - Each time a commit is pushed to a branch, the CI/CD pipeline needs to be triggered by creating a versioned TAG:( ex: 1.0.1-SNAPSHOT or 1.0.1 )
+   - Once the TAG pipeline completes successfully, it will create an artifact named `Autosys.xxx.zip`, which contains the `.jil` files for the specific environments.
+   - The artifact will be pushed to the Nexus designated environment based on the TAG version.(Snapshot or Release)
+
+3. **Deployment**:
+   - The Nexus artifact will be added in the UBS Deploy Release page and pushed to specific environments.
