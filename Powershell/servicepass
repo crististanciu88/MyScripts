@@ -1,0 +1,50 @@
+# Require administrative rights to read the HKLM service registry path
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Error "Administrator privileges are required to run this script."
+    return $null
+}
+
+try {
+    # Construct the registry path for the service:
+    # This assumes that your service’s configuration is stored in:
+    # HKLM:\SYSTEM\CurrentControlSet\Services\<ServiceName>
+    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
+    
+    # Test if the registry key exists
+    if (-not (Test-Path $regPath)) {
+        Write-Error "Service '$ServiceName' does not appear to have a registry key at $regPath."
+        return $null
+    }
+    
+    # Get the registry value based on the provided parameter name
+    $regValue = Get-ItemProperty -Path $regPath -Name $ParameterName -ErrorAction Stop
+    
+    if (-not $regValue.$ParameterName) {
+        Write-Error "Parameter '$ParameterName' not found in registry for service '$ServiceName'."
+        return $null
+    }
+    
+    $encryptedBase64 = $regValue.$ParameterName
+
+    # Convert the base64 string to bytes
+    $encryptedBytes = [Convert]::FromBase64String($encryptedBase64)
+    
+    # Decrypt the bytes using DPAPI.
+    # Usually, you would encrypt using:
+    #  ProtectedData.Protect(plaintextBytes, $optionalEntropy, DataProtectionScope.LocalMachine)
+    # and then decrypt using the corresponding Unprotect call.
+    $decryptedBytes = [System.Security.Cryptography.ProtectedData]::Unprotect(
+                            $encryptedBytes, 
+                            $null, 
+                            [System.Security.Cryptography.DataProtectionScope]::LocalMachine
+                        )
+    $decryptedPassword = [System.Text.Encoding]::UTF8.GetString($decryptedBytes)
+    
+    return $decryptedPassword
+}
+catch {
+    Write-Error "An error occurred: $_"
+    return $null
+}
