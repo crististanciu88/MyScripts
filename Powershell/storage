@@ -1,0 +1,91 @@
+esult:
+# Viewing, Listing, and Editing Files in Azure Blob Storage using PowerShell and Azure CLI
+
+Here's how to work with Azure Blob Storage containers using a service account with both PowerShell and Azure CLI:
+
+## Prerequisites
+- Azure service principal (service account) with appropriate permissions (Storage Blob Data Contributor or similar)
+- Azure PowerShell module or Azure CLI installed
+
+## Using Azure PowerShell
+
+### 1. Authenticate with Service Principal
+```powershell
+$tenantId = "<your-tenant-id>"
+$appId = "<your-service-principal-app-id>"
+$secret = "<your-service-principal-secret>"
+
+$secureSecret = ConvertTo-SecureString -String $secret -AsPlainText -Force
+$credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $appId, $secureSecret
+
+Connect-AzAccount -ServicePrincipal -Credential $credential -Tenant $tenantId
+```
+
+### 2. List Blobs in a Container
+```powershell
+$storageAccountName = "<your-storage-account>"
+$containerName = "<your-container>"
+$resourceGroup = "<resource-group-name>"
+
+$storageContext = New-AzStorageContext -StorageAccountName $storageAccountName -UseConnectedAccount
+
+Get-AzStorageBlob -Container $containerName -Context $storageContext | Select-Object Name, LastModified, Length
+```
+
+### 3. Download a Blob to View/Edit
+```powershell
+$blobName = "example.txt"
+$destinationPath = "C:\temp\example.txt"
+
+Get-AzStorageBlobContent -Container $containerName -Blob $blobName -Destination $destinationPath -Context $storageContext
+```
+
+### 4. Upload an Edited Blob
+```powershell
+Set-AzStorageBlobContent -Container $containerName -File $destinationPath -Blob $blobName -Context $storageContext -Force
+```
+
+## Using Azure CLI
+
+### 1. Authenticate with Service Principal
+```bash
+az login --service-principal -u <your-service-principal-app-id> -p <your-service-principal-secret> --tenant <your-tenant-id>
+```
+
+### 2. List Blobs in a Container
+```bash
+az storage blob list \
+    --account-name <your-storage-account> \
+    --container-name <your-container> \
+    --auth-mode login \
+    --output table
+```
+
+### 3. Download a Blob to View/Edit
+```bash
+az storage blob download \
+    --account-name <your-storage-account> \
+    --container-name <your-container> \
+    --name example.txt \
+    --file ~/Downloads/example.txt \
+    --auth-mode login
+```
+
+### 4. Upload an Edited Blob
+```bash
+az storage blob upload \
+    --account-name <your-storage-account> \
+    --container-name <your-container> \
+    --name example.txt \
+    --file ~/Downloads/example.txt \
+    --auth-mode login \
+    --overwrite
+```
+
+## Notes
+1. For editing, you'll need to download the file, edit it locally, then upload it back
+2. For text files, you can use `Get-Content` (PowerShell) or `cat` (CLI) to view contents directly
+3. Ensure your service principal has the appropriate RBAC roles assigned (Storage Blob Data Contributor at minimum)
+4. For large files or frequent operations, consider using Azure Storage Explorer with service principal credentials
+
+Would you like more details on any specific part of this process?
