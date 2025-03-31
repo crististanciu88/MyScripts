@@ -1,0 +1,40 @@
+Below is a sample script:
+
+------------------------------------------------
+# Set your variables
+$organization = "your-org-name"
+$workspace = "your-workspace-name"
+$tfeToken = "your-TFE-token"  # This should be kept secret!
+$tfeUrl = "https://app.terraform.io"  # Change if you use a different TFE endpoint
+
+# Prepare the headers to authenticate with TFE
+$headers = @{
+    "Authorization" = "Bearer $tfeToken"
+    "Content-Type"  = "application/vnd.api+json"
+    "Accept"        = "application/vnd.api+json"
+}
+
+# Step 1: Get the workspace details (and thereby the workspace ID)
+# You can query by name under the organization. There are two options:
+# Option A: Directly request the workspace if you know its name in the URL:
+$workspaceUrl = "$tfeUrl/api/v2/organizations/$organization/workspaces/$workspace"
+$responseWorkspace = Invoke-RestMethod -Uri $workspaceUrl -Headers $headers -Method Get
+
+# Extract the workspace ID
+$workspaceId = $responseWorkspace.data.id
+Write-Host "Workspace ID: $workspaceId"
+
+# Step 2: Get the current state version info for the workspace
+$stateUrl = "$tfeUrl/api/v2/workspaces/$workspaceId/current-state-version"
+$responseState = Invoke-RestMethod -Uri $stateUrl -Headers $headers -Method Get
+
+# Extract the download URL for the state file from the API response.
+$downloadUrl = $responseState.data.attributes."hosted-state-download-url"
+Write-Host "State file download URL: $downloadUrl"
+
+# Step 3: Download the state file to a local file.
+# Note: If the hosted state file URL requires authentication headers, include them. Often this URL is a temporary one that does not require auth.
+$outputFile = "latest.tfstate"
+Invoke-WebRequest -Uri $downloadUrl -OutFile $outputFile
+
+Write-Host "State file saved as $outputFile"
