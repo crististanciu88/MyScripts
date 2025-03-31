@@ -1,40 +1,72 @@
-Below is a sample script:
+Analysis Result:
+Below is an example Azure DevOps YAML stage that uses a Bash script to download a Terraform Enterprise (TFE) state file from Azure Blob Storage (using the az CLI), âmergesâuploads the updated file back to Azure, and then publishes that file as a pipeline artifact. (Adjust container names, storage account names and keys, blob names, and merge log
+ic as needed.)
 
-------------------------------------------------
-# Set your variables
-$organization = "your-org-name"
-$workspace = "your-workspace-name"
-$tfeToken = "your-TFE-token"  # This should be kept secret!
-$tfeUrl = "https://app.terraform.io"  # Change if you use a different TFE endpoint
+Note:
+â¢ This example assumes that your state file is JSON and that merging two state files is as simple as âmergingâ
+â¢ It also assumes that the build agent already has the az CLI and jq installed.
+â¢ You may want to store your storage credentials (or use a Service Connection) via pipeline variables or Azure DevOps Service Connections.
+â¢ The artifact is published by copying the updated state file into the staging directory and then using the logging command to publish it. You could also use the Publish Pipeline Artifact task if you prefer.
 
-# Prepare the headers to authenticate with TFE
-$headers = @{
-    "Authorization" = "Bearer $tfeToken"
-    "Content-Type"  = "application/vnd.api+json"
-    "Accept"        = "application/vnd.api+json"
-}
+âââââââââââââââââââââââââââââ YAML Example âââââââââââââââââââââââââââââ
 
-# Step 1: Get the workspace details (and thereby the workspace ID)
-# You can query by name under the organization. There are two options:
-# Option A: Directly request the workspace if you know its name in the URL:
-$workspaceUrl = "$tfeUrl/api/v2/organizations/$organization/workspaces/$workspace"
-$responseWorkspace = Invoke-RestMethod -Uri $workspaceUrl -Headers $headers -Method Get
+stages:
+- stage: UpdateTFEState
+  displayName: "Download, update, and upload TFE state file"
+  jobs:
+  - job: MergeStateJob
+    displayName: "Download state, merge update, and publish artifact"
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
 
-# Extract the workspace ID
-$workspaceId = $responseWorkspace.data.id
-Write-Host "Workspace ID: $workspaceId"
+    - script: |
+        set -e
 
-# Step 2: Get the current state version info for the workspace
-$stateUrl = "$tfeUrl/api/v2/workspaces/$workspaceId/current-state-version"
-$responseState = Invoke-RestMethod -Uri $stateUrl -Headers $headers -Method Get
+        echo "== Downloading the current TFE state file from Azure Storage =="
+        # (Fill in your container name, storage account, blob name and output file)
+        az storage blob download \
+          --container-name mycontainer \
+          --account-name mystorageaccount \
+          --name tfe.tfstate \
+          --file downloaded.tfstate
 
-# Extract the download URL for the state file from the API response.
-$downloadUrl = $responseState.data.attributes."hosted-state-download-url"
-Write-Host "State file download URL: $downloadUrl"
+        echo "== Merging downloaded state with repository state file =="
+        # In this example we use jq to merge the two JSON documents. Adjust the merge logic as needed.
+        # Here we assume that the repository file is at repo/tfefiles/example.state.
+        if ! command -v jq &> /dev/null; then
+          echo "jq could not be found; please ensure it is installed"
+          exit 1
+        fi
 
-# Step 3: Download the state file to a local file.
-# Note: If the hosted state file URL requires authentication headers, include them. Often this URL is a temporary one that does not require auth.
-$outputFile = "latest.tfstate"
-Invoke-WebRequest -Uri $downloadUrl -OutFile $outputFile
+        # Merge the two JSON files. This uses the jq "slurp" feature and a simple update (.[0] * .[1]).
+        # You might need a more advanced merge depending on your state file structure.
+        jq -s '.[0] * .[1]' downloaded.tfstate repo/tfefiles/example.state > updated.tfstate
 
-Write-Host "State file saved as $outputFile"
+        echo "== Uploading the updated state file back to Azure Storage =="
+        az storage blob upload \
+          --container-name mycontainer \
+          --account-name mystorageaccount \
+          --name tfe.tfstate \
+          --file updated.tfstate \
+          --overwrite
+
+        echo "== Preparing to publish the updated state file as a pipeline artifact =="
+        # Ensure the staging directory exists.
+        mkdir -p "$(Build.ArtifactStagingDirectory)"
+        cp updated.tfstate "$(Build.ArtifactStagingDirectory)/updated.tfstate"
+
+        # The following logging command tells Azure DevOps to upload the artifact.
+        echo "##vso[artifact.upload artifactname=UpdatedTFEState;]$(Build.ArtifactStagingDirectory)/updated.tfstate"
+      displayName: "Download, merge, and upload TFE state file"
+
+    # Alternatively, you can use the dedicated Publish Pipeline Artifact task.
+    #- task: PublishPipelineArtifact@1
+    #  inputs:
+    #    targetPath: '$(Build.ArtifactStagingDirectory)/updated.tfstate'
+    #    artifact: 'UpdatedTFEState'
+How It Works:
+1. The script uses az CLIâs "az storage blob download" to pull the remote TFE state file (adjust the container/account/blob names as needed).
+2. It then merges that file with the file from your repo (repo/tfefiles/example.state) using jq. Modify the jq command if your merge logic differs.
+3. The updated file is then uploaded back to Azure using "az storage blob upload" with the --overwrite flag.
+4. Finally, the updated state file is copied into the pipelineâs artifact staging directory, and a special logging command is used to publish it as an artifact named âUpdatedTFEStateâ
