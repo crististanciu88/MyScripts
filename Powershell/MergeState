@@ -1,0 +1,67 @@
+param (
+    [Parameter(Mandatory=$true)]
+    [string]$SourcePath,
+
+    [Parameter(Mandatory=$true)]
+    [string]$DestinationPath,
+
+    [string]$OutputPath
+)
+
+# Set default output path if not provided
+if (-not $OutputPath) {
+    $OutputPath = $DestinationPath -replace '\.json$|\.tfstate$', '_merged.tfstate'
+}
+
+# Load JSON files
+try {
+    $sourceJson = Get-Content -Path $SourcePath -Raw | ConvertFrom-Json -Depth 100
+    $destJson = Get-Content -Path $DestinationPath -Raw | ConvertFrom-Json -Depth 100
+}
+catch {
+    Write-Error "Failed to load or parse JSON files: $_"
+    exit 1
+}
+
+# Verify we have valid Terraform state files
+if (-not $sourceJson.resources -or -not $destJson.resources) {
+    Write-Error "Input files don't appear to be valid Terraform state files (missing 'resources' property)"
+    exit 1
+}
+
+# Create a hashtable of existing resources in destination for quick lookup
+$destResources = @{}
+foreach ($resource in $destJson.resources) {
+    $key = "$($resource.type).$($resource.name)"
+    $destResources[$key] = $true
+}
+
+# Track how many resources we're adding
+$addedCount = 0
+
+# Compare and add missing resources
+foreach ($resource in $sourceJson.resources) {
+    $key = "$($resource.type).$($resource.name)"
+
+    if (-not $destResources.ContainsKey($key)) {
+        Write-Host "Adding resource: $key"
+        $destJson.resources += $resource
+        $addedCount++
+    }
+}
+
+if ($addedCount -eq 0) {
+    Write-Host "No new resources to add - destination already contains all resources from source."
+    exit 0
+}
+
+# Save the merged state file
+try {
+    $destJson | ConvertTo-Json -Depth 100 | Out-File -FilePath $OutputPath -Force
+    Write-Host "Successfully merged state files. Added $addedCount resources."
+    Write-Host "Merged file saved to: $OutputPath"
+}
+catch {
+    Write-Error "Failed to save merged state file: $_"
+    exit 1
+}
