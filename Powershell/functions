@@ -1,0 +1,124 @@
+Here's how you can structure your Terraform configuration to create multiple Azure Functions using `for_each` with an external module.
+
+## variables.tf
+
+```hcl
+variable "azure_functions" {
+  description = "Map of Azure Function configurations"
+  type = map(object({
+    name                       = string
+    location                   = optional(string, null)
+    resource_group_name        = optional(string, null)
+    app_service_plan_id        = optional(string, null)
+    storage_account_name       = optional(string, null)
+    storage_account_access_key = optional(string, null)
+    os_type                    = optional(string, "linux")
+    runtime_version            = optional(string, "~4")
+    runtime                    = optional(string, "dotnet")
+    app_settings               = optional(map(string), {})
+    site_config = optional(object({
+      always_on        = optional(bool, false)
+      linux_fx_version = optional(string, null)
+      ftps_state       = optional(string, "Disabled")
+    }), {})
+    tags = optional(map(string), {})
+  }))
+  default = {}
+}
+
+variable "resource_group_name" {
+  description = "Default resource group name for functions if not specified individually"
+  type        = string
+  default     = null
+}
+
+variable "location" {
+  description = "Default location for functions if not specified individually"
+  type        = string
+  default     = null
+}
+
+variable "app_service_plan_id" {
+  description = "Default app service plan ID for functions if not specified individually"
+  type        = string
+  default     = null
+}
+
+variable "storage_account_name" {
+  description = "Default storage account name for functions if not specified individually"
+  type        = string
+  default     = null
+}
+
+variable "storage_account_access_key" {
+  description = "Default storage account access key for functions if not specified individually"
+  type        = string
+  default     = null
+}
+```
+
+## terraform.tfvars
+
+```hcl
+resource_group_name        = "my-function-rg"
+location                   = "eastus"
+app_service_plan_id        = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/my-plan-rg/providers/Microsoft.Web/serverfarms/my-asp"
+storage_account_name       = "mystorageaccount"
+storage_account_access_key = "my-storage-access-key"
+
+azure_functions = {
+  function1 = {
+    name         = "my-function-app-1"
+    runtime      = "dotnet"
+    runtime_version = "~4"
+    os_type      = "linux"
+    app_settings = {
+      "APPINSIGHTS_INSTRUMENTATIONKEY" = "12345678-1234-1234-1234-123456789012"
+      "FUNCTIONS_WORKER_RUNTIME"       = "dotnet"
+    }
+    site_config = {
+      always_on = true
+    }
+    tags = {
+      Environment = "Production"
+      Team        = "DevOps"
+    }
+  },
+  function2 = {
+    name         = "my-function-app-2"
+    runtime      = "node"
+    runtime_version = "~14"
+    os_type      = "linux"
+    app_settings = {
+      "APPINSIGHTS_INSTRUMENTATIONKEY" = "12345678-1234-1234-1234-123456789012"
+      "FUNCTIONS_WORKER_RUNTIME"       = "node"
+    }
+    tags = {
+      Environment = "Staging"
+      Team        = "Dev"
+    }
+  }
+}
+```
+
+## functions.tf (example usage)
+
+```hcl
+module "azure_function" {
+  source = "your-module-source" # e.g., "Azure/function-app/azurerm"
+
+  for_each = var.azure_functions
+
+  name                       = each.value.name
+  location                   = coalesce(each.value.location, var.location)
+  resource_group_name        = coalesce(each.value.resource_group_name, var.resource_group_name)
+  app_service_plan_id        = coalesce(each.value.app_service_plan_id, var.app_service_plan_id)
+  storage_account_name       = coalesce(each.value.storage_account_name, var.storage_account_name)
+  storage_account_access_key = coalesce(each.value.storage_account_access_key, var.storage_account_access_key)
+  os_type                    = each.value.os_type
+  runtime_version            = each.value.runtime_version
+  runtime                    = each.value.runtime
+  app_settings               = each.value.app_settings
+  site_config                = each.value.site_config
+  tags                       = each.value.tags
+}
