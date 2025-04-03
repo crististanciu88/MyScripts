@@ -1,124 +1,140 @@
-Here's how you can structure your Terraform configuration to create multiple Azure Functions using `for_each` with an external module.
+Here's how you can structure your configuration to create multiple Azure Functions using `for_each` with external modules.
 
-## variables.tf
+## 1. Variable Definitions (variables.tf)
 
 ```hcl
 variable "azure_functions" {
-  description = "Map of Azure Function configurations"
+  description = "Configuration for multiple Azure Functions"
   type = map(object({
-    name                       = string
-    location                   = optional(string, null)
-    resource_group_name        = optional(string, null)
-    app_service_plan_id        = optional(string, null)
-    storage_account_name       = optional(string, null)
-    storage_account_access_key = optional(string, null)
-    os_type                    = optional(string, "linux")
-    runtime_version            = optional(string, "~4")
-    runtime                    = optional(string, "dotnet")
-    app_settings               = optional(map(string), {})
-    site_config = optional(object({
-      always_on        = optional(bool, false)
-      linux_fx_version = optional(string, null)
-      ftps_state       = optional(string, "Disabled")
-    }), {})
-    tags = optional(map(string), {})
+    function_name      = string
+    location           = string
+    resource_group_name = string
+
+    # Storage Account settings
+    storage_account_tier              = string
+    storage_account_replication_type  = string
+    storage_account_kind              = string
+
+    # App Service Plan settings
+    service_plan_sku_name = string
+    service_plan_os_type  = string
+
+    # Function App settings
+    function_app_version = string
+    app_settings         = map(string)
+    tags                 = map(string)
   }))
+
   default = {}
-}
-
-variable "resource_group_name" {
-  description = "Default resource group name for functions if not specified individually"
-  type        = string
-  default     = null
-}
-
-variable "location" {
-  description = "Default location for functions if not specified individually"
-  type        = string
-  default     = null
-}
-
-variable "app_service_plan_id" {
-  description = "Default app service plan ID for functions if not specified individually"
-  type        = string
-  default     = null
-}
-
-variable "storage_account_name" {
-  description = "Default storage account name for functions if not specified individually"
-  type        = string
-  default     = null
-}
-
-variable "storage_account_access_key" {
-  description = "Default storage account access key for functions if not specified individually"
-  type        = string
-  default     = null
 }
 ```
 
-## terraform.tfvars
+## 2. Terraform Variables (terraform.tfvars)
 
 ```hcl
-resource_group_name        = "my-function-rg"
-location                   = "eastus"
-app_service_plan_id        = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/my-plan-rg/providers/Microsoft.Web/serverfarms/my-asp"
-storage_account_name       = "mystorageaccount"
-storage_account_access_key = "my-storage-access-key"
-
 azure_functions = {
-  function1 = {
-    name         = "my-function-app-1"
-    runtime      = "dotnet"
-    runtime_version = "~4"
-    os_type      = "linux"
+  "function1" = {
+    function_name      = "myfunction1"
+    location           = "eastus"
+    resource_group_name = "my-resource-group"
+
+    storage_account_tier              = "Standard"
+    storage_account_replication_type  = "LRS"
+    storage_account_kind              = "StorageV2"
+
+    service_plan_sku_name = "Y1"
+    service_plan_os_type  = "Linux"
+
+    function_app_version = "~4"
     app_settings = {
-      "APPINSIGHTS_INSTRUMENTATIONKEY" = "12345678-1234-1234-1234-123456789012"
-      "FUNCTIONS_WORKER_RUNTIME"       = "dotnet"
-    }
-    site_config = {
-      always_on = true
+      "FUNCTIONS_WORKER_RUNTIME" = "python"
+      "APPINSIGHTS_INSTRUMENTATIONKEY" = "your-instrumentation-key"
     }
     tags = {
-      Environment = "Production"
+      Environment = "Dev"
       Team        = "DevOps"
     }
   },
-  function2 = {
-    name         = "my-function-app-2"
-    runtime      = "node"
-    runtime_version = "~14"
-    os_type      = "linux"
+  "function2" = {
+    function_name      = "myfunction2"
+    location           = "eastus"
+    resource_group_name = "my-resource-group"
+
+    storage_account_tier              = "Standard"
+    storage_account_replication_type  = "LRS"
+    storage_account_kind              = "StorageV2"
+
+    service_plan_sku_name = "Y1"
+    service_plan_os_type  = "Linux"
+
+    function_app_version = "~4"
     app_settings = {
-      "APPINSIGHTS_INSTRUMENTATIONKEY" = "12345678-1234-1234-1234-123456789012"
-      "FUNCTIONS_WORKER_RUNTIME"       = "node"
+      "FUNCTIONS_WORKER_RUNTIME" = "node"
+      "APPINSIGHTS_INSTRUMENTATIONKEY" = "your-instrumentation-key"
     }
     tags = {
-      Environment = "Staging"
-      Team        = "Dev"
+      Environment = "Prod"
+      Team        = "DevOps"
     }
   }
 }
 ```
 
-## functions.tf (example usage)
+## 3. Example Usage in functions.tf
 
 ```hcl
-module "azure_function" {
-  source = "your-module-source" # e.g., "Azure/function-app/azurerm"
-
+# Storage Account Module
+module "function_storage" {
+  source   = "./modules/storage-account"
   for_each = var.azure_functions
 
-  name                       = each.value.name
-  location                   = coalesce(each.value.location, var.location)
-  resource_group_name        = coalesce(each.value.resource_group_name, var.resource_group_name)
-  app_service_plan_id        = coalesce(each.value.app_service_plan_id, var.app_service_plan_id)
-  storage_account_name       = coalesce(each.value.storage_account_name, var.storage_account_name)
-  storage_account_access_key = coalesce(each.value.storage_account_access_key, var.storage_account_access_key)
-  os_type                    = each.value.os_type
-  runtime_version            = each.value.runtime_version
-  runtime                    = each.value.runtime
-  app_settings               = each.value.app_settings
-  site_config                = each.value.site_config
-  tags                       = each.value.tags
+  name                     = each.value.function_name
+  resource_group_name      = each.value.resource_group_name
+  location                 = each.value.location
+  account_tier             = each.value.storage_account_tier
+  account_replication_type = each.value.storage_account_replication_type
+  account_kind             = each.value.storage_account_kind
+  tags                     = each.value.tags
 }
+
+# Service Plan Module
+module "function_service_plan" {
+  source   = "./modules/service-plan"
+  for_each = var.azure_functions
+
+  name                = each.value.function_name
+  resource_group_name = each.value.resource_group_name
+  location            = each.value.location
+  sku_name            = each.value.service_plan_sku_name
+  os_type             = each.value.service_plan_os_type
+  tags                = each.value.tags
+}
+
+# Function App Module
+module "function_app" {
+  source   = "./modules/function-app"
+  for_each = var.azure_functions
+
+  name                = each.value.function_name
+  resource_group_name = each.value.resource_group_name
+  location            = each.value.location
+  service_plan_id     = module.function_service_plan[each.key].id
+  storage_account_name = module.function_storage[each.key].name
+  storage_account_access_key = module.function_storage[each.key].primary_access_key
+  version             = each.value.function_app_version
+  app_settings        = each.value.app_settings
+  tags                = each.value.tags
+}
+```
+
+## Key Points:
+
+1. The `azure_functions` variable is a map of objects where each key represents a unique identifier for each function configuration.
+
+2. Each module uses `for_each` with the same variable, ensuring consistent iteration across all resources.
+
+3. The `each.key` refers to the map key ("function1", "function2"), while `each.value` contains the configuration object.
+
+4. Modules can reference outputs from other modules using the same key pattern (`module.function_service_plan[each.key].id`).
+
+5. You can add or remove functions by modifying the `terraform.tfvars` file without changing the main configuration.
