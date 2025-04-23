@@ -1,0 +1,45 @@
+# Parameters
+$sourceStateFile = "source.tfstate"    # Path to source state file (contains resources to copy)
+$targetStateFile = "target.tfstate"    # Path to target state file (will receive resources)
+$outputFile = "updated.tfstate"        # Output file path
+
+# Read both state files
+$sourceContent = Get-Content $sourceStateFile -Raw | ConvertFrom-Json -Depth 100
+$targetContent = Get-Content $targetStateFile -Raw | ConvertFrom-Json -Depth 100
+
+# Replace resources block in target with source's resources
+$targetContent.resources = $sourceContent.resources
+
+# Convert back to JSON with specific settings to preserve characters and formatting
+$jsonSettings = @{
+    Depth = 100
+    Compress = $false
+    EscapeHandling = [Newtonsoft.Json.EscapeHandling]::Default  # Preserves &, <, > as-is
+}
+
+# Using Newtonsoft.Json for better control over serialization
+Add-Type -Path "Newtonsoft.Json.dll" -ErrorAction SilentlyContinue
+$updatedContent = [Newtonsoft.Json.JsonConvert]::SerializeObject($targetContent, [Newtonsoft.Json.Formatting]::Indented, $jsonSettings)
+
+# Save the updated content
+$updatedContent | Out-File -FilePath $outputFile -Encoding utf8 -Force
+
+Write-Host "State file updated successfully. Resources block replaced while preserving other sections."
+Write-Host "Output saved to: $outputFile"
+```
+
+## Important Notes:
+
+1. **Newtonsoft.Json Requirement**: This script uses Newtonsoft.Json for better JSON handling. You may need to:
+   - Install it via `Install-Package Newtonsoft.Json -Force`
+   - Or download the DLL and reference it
+
+2. **Alternative Without Newtonsoft**:
+   If you can't use Newtonsoft.Json, here's a simpler version (but with less control over character escaping):
+
+```powershell
+# Simple version without Newtonsoft.Json
+$sourceContent = Get-Content $sourceStateFile -Raw | ConvertFrom-Json -Depth 100
+$targetContent = Get-Content $targetStateFile -Raw | ConvertFrom-Json -Depth 100
+$targetContent.resources = $sourceContent.resources
+$targetContent | ConvertTo-Json -Depth 100 | Out-File $outputFile -Encoding utf8
