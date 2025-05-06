@@ -1,0 +1,85 @@
+<#
+.SYNOPSIS
+    Starts or stops specific VM instances in a Virtual Machine Scale Set.
+.DESCRIPTION
+    This script allows you to start or stop specific VM instances within a scale set.
+    It's designed to run in an Azure Automation Runbook.
+.PARAMETER Action
+    The action to perform - 'Start' or 'Stop'
+.PARAMETER SubscriptionId
+    The Azure subscription ID where the scale set resides
+.PARAMETER ResourceGroupName
+    The resource group name containing the scale set
+.PARAMETER ScaleSetName
+    The name of the Virtual Machine Scale Set
+.PARAMETER InstanceIds
+    Comma-separated list of instance IDs to start/stop (e.g., "0,1,2")
+.EXAMPLE
+    .\Manage-ScaleSetInstances.ps1 -Action "Start" -SubscriptionId "xxxx-xxxx-xxxx-xxxx" -ResourceGroupName "myRG" -ScaleSetName "myScaleSet" -InstanceIds "0,1,2"
+#>
+
+param(
+    [Parameter(Mandatory=$true)]
+    [ValidateSet("Start", "Stop")]
+    [string]$Action,
+
+    [Parameter(Mandatory=$true)]
+    [string]$SubscriptionId,
+
+    [Parameter(Mandatory=$true)]
+    [string]$ResourceGroupName,
+
+    [Parameter(Mandatory=$true)]
+    [string]$ScaleSetName,
+
+    [Parameter(Mandatory=$true)]
+    [string]$InstanceIds
+)
+
+# Connect to Azure with Automation RunAs account
+try {
+    $servicePrincipalConnection = Get-AutomationConnection -Name "AzureRunAsConnection"
+    Connect-AzAccount -ServicePrincipal `
+        -Tenant $servicePrincipalConnection.TenantId `
+        -ApplicationId $servicePrincipalConnection.ApplicationId `
+        -CertificateThumbprint $servicePrincipalConnection.CertificateThumbprint | Out-Null
+}
+catch {
+    if (!$servicePrincipalConnection) {
+        throw "Connection AzureRunAsConnection not found."
+    } else {
+        throw $_.Exception
+    }
+}
+
+# Set the subscription context
+Set-AzContext -SubscriptionId $SubscriptionId | Out-Null
+
+# Split the instance IDs into an array
+$instances = $InstanceIds.Split(',')
+
+# Process each instance
+foreach ($instanceId in $instances) {
+    try {
+        $instanceId = $instanceId.Trim()
+
+        # Get the VM instance
+        $vmInstance = Get-AzVmssVM -ResourceGroupName $ResourceGroupName -VMScaleSetName $ScaleSetName -InstanceId $instanceId -ErrorAction Stop
+
+        if ($Action -eq "Start") {
+            Write-Output "Starting instance $instanceId in scale set $ScaleSetName"
+            Start-AzVmss -ResourceGroupName $ResourceGroupName -VMScaleSetName $ScaleSetName -InstanceId $instanceId -ErrorAction Stop
+            Write-Output "Successfully started instance $instanceId"
+        }
+        elseif ($Action -eq "Stop") {
+            Write-Output "Stopping instance $instanceId in scale set $ScaleSetName"
+            Stop-AzVmss -ResourceGroupName $ResourceGroupName -VMScaleSetName $ScaleSetName -InstanceId $instanceId -Force -ErrorAction Stop
+            Write-Output "Successfully stopped instance $instanceId"
+        }
+    }
+    catch {
+        Write-Error "Failed to $Action instance $instanceId : $_"
+    }
+}
+
+Write-Output "Operation completed for all specified instances"
