@@ -1,0 +1,83 @@
+
+<#
+.SYNOPSIS
+    Starts or stops specific VM instances in a Virtual Machine Scale Set (VMSS).
+.DESCRIPTION
+    This script is designed to be run from an Azure Automation Runbook to manage the power state of specific VM instances in a scale set.
+    It requires the resource group name, scale set name, action (start/stop), and instance IDs as input parameters.
+.PARAMETER ResourceGroupName
+    The name of the resource group containing the VM scale set.
+.PARAMETER VmScaleSetName
+    The name of the virtual machine scale set.
+.PARAMETER Action
+    The action to perform - either "Start" or "Stop".
+.PARAMETER InstanceIds
+    An array of instance IDs to perform the action on. If not provided, the script will exit.
+.EXAMPLE
+    .\Manage-VmssInstances.ps1 -ResourceGroupName "myResourceGroup" -VmScaleSetName "myScaleSet" -Action "Start" -InstanceIds @("0", "1")
+#>
+
+param (
+    [Parameter(Mandatory=$true)]
+    [string]$ResourceGroupName,
+
+    [Parameter(Mandatory=$true)]
+    [string]$VmScaleSetName,
+
+    [Parameter(Mandatory=$true)]
+    [ValidateSet("Start", "Stop")]
+    [string]$Action,
+
+    [Parameter(Mandatory=$false)]
+    [string[]]$InstanceIds
+)
+
+# Ensure we're connected to Azure
+try {
+    $connection = Get-AutomationConnection -Name "AzureRunAsConnection"
+    Connect-AzAccount -ServicePrincipal -Tenant $connection.TenantID -ApplicationId $connection.ApplicationID -CertificateThumbprint $connection.CertificateThumbprint | Out-Null
+}
+catch {
+    Write-Error "Failed to connect to Azure: $_"
+    exit 1
+}
+
+# Check if instance IDs were provided
+if (-not $InstanceIds -or $InstanceIds.Count -eq 0) {
+    Write-Output "No instance IDs provided. Exiting script."
+    exit 0
+}
+
+# Validate the scale set exists
+try {
+    $scaleSet = Get-AzVmss -ResourceGroupName $ResourceGroupName -VMScaleSetName $VmScaleSetName -ErrorAction Stop
+}
+catch {
+    Write-Error "Failed to get scale set '$VmScaleSetName' in resource group '$ResourceGroupName': $_"
+    exit 1
+}
+
+# Process each instance
+foreach ($instanceId in $InstanceIds) {
+    try {
+        # Check if instance exists
+        $instance = Get-AzVmssVM -ResourceGroupName $ResourceGroupName -VMScaleSetName $VmScaleSetName -InstanceId $instanceId -ErrorAction Stop
+
+        # Perform the requested action
+        if ($Action -eq "Start") {
+            Write-Output "Starting instance $instanceId in scale set $VmScaleSetName"
+            Start-AzVmss -ResourceGroupName $ResourceGroupName -VMScaleSetName $VmScaleSetName -InstanceId $instanceId | Out-Null
+        }
+        elseif ($Action -eq "Stop") {
+            Write-Output "Stopping instance $instanceId in scale set $VmScaleSetName"
+            Stop-AzVmss -ResourceGroupName $ResourceGroupName -VMScaleSetName $VmScaleSetName -InstanceId $instanceId -Force | Out-Null
+        }
+
+        Write-Output "Successfully processed instance $instanceId"
+    }
+    catch {
+        Write-Warning "Failed to process instance $instanceId: $_"
+    }
+}
+
+Write-Output "Operation completed."
