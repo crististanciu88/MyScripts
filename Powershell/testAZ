@@ -1,0 +1,58 @@
+using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Azure.WebJobs;
+using Microsoft.Azure.WebJobs.Extensions.Http;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using Microsoft.ApplicationInsights;
+using Microsoft.ApplicationInsights.DataContracts;
+
+namespace MyFunctionApp
+{
+    public static class AppInsightsDemoFunction
+    {
+        // Initialize a TelemetryClient instance.
+        // By default, when running in your Azure Function,
+        // Application Insights will auto-collect your telemetry if properly configured.
+        // Alternatively, you can configure TelemetryClient via dependency injection.
+        private static TelemetryClient telemetryClient = new TelemetryClient();
+
+        [FunctionName("AppInsightsDemoFunction")]
+        public static async Task<IActionResult> Run(
+            [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
+            ILogger log)
+        {
+            log.LogInformation("AppInsightsDemoFunction processed a request.");
+
+            // Track a custom event.
+            telemetryClient.TrackEvent("AppInsightsDemo_FunctionInvoked");
+
+            // Track a trace with severity.
+            telemetryClient.TrackTrace("A custom informational trace.", SeverityLevel.Information);
+
+            // Track a custom metric.
+            telemetryClient.TrackMetric("CustomMetricValue", 42);
+
+            // Demonstrate exception tracking.
+            try
+            {
+                // Simulate some code that throws an exception.
+                throw new InvalidOperationException("Simulated exception for telemetry");
+            }
+            catch (Exception ex)
+            {
+                // Track the exception in Application Insights.
+                telemetryClient.TrackException(ex);
+            }
+
+            // Flush telemetry data before the function exits.
+            // Note: In some cases (especially in non-HTTP triggered Funtions),
+            // calling Flush() ensures the telemetry is sent immediately.
+            telemetryClient.Flush();
+
+            // Returning a simple response.
+            return new OkObjectResult("Telemetry events have been sent to Application Insights.");
+        }
+    }
+}
