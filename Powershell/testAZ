@@ -1,54 +1,83 @@
----------------------------------------------------------------
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Azure.WebJobs;
-using Microsoft.Azure.WebJobs.Extensions.Http;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
+// Program.cs
+using Microsoft.ApplicationInsights;
+using Microsoft.ApplicationInsights.Extensibility;
+using Microsoft.Azure.Functions.Worker.Configuration;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace MyFunctionApp
 {
-    public static class MyHttpTrigger
+    public class Program
     {
-        [FunctionName("MyHttpTrigger")]
-        public static async Task<IActionResult> Run(
-            [HttpTrigger(AuthorizationLevel.Function, "get", "post", Route = null)] HttpRequest req,
-            ILogger log)
+        public static void Main()
         {
-            // Log an informational message (this will flow to Application Insights)
-            log.LogInformation("Function MyHttpTrigger triggered.");
+            var host = new HostBuilder()
+                // Ensure the Functions Worker and extensions (like HTTP) are configured.
+                .ConfigureFunctionsWorkerDefaults(worker =>
+                {
+                    // Optionally: you can add custom configuration here.
+                })
+                // Configure DI services.
+                .ConfigureServices((context, services) =>
+                {
+                    // Registers Application Insights; it automatically reads the instrumentation key
+                    // from the APPINSIGHTS_INSTRUMENTATIONKEY environment variable.
+                    services.AddApplicationInsightsTelemetryWorkerService();
 
-            // You can also log custom telemetry events:
-            log.LogInformation("Custom Event: Processing request.");
+                    // (Optional) If youâd like direct access to TelemetryConfiguration, you can register it:
+                    // services.AddSingleton<TelemetryConfiguration>(sp =>
+                    // {
+                    //     var config = TelemetryConfiguration.CreateDefault();
+                    //     config.InstrumentationKey = context.Configuration["APPINSIGHTS_INSTRUMENTATIONKEY"];
+                    //     return config;
+                    // });
+                })
+                .Build();
 
-            // Read a query parameter:
-            string name = req.Query["name"];
-
-            string responseMessage = string.IsNullOrEmpty(name)
-                ? "Hello, Azure Functions user! Provide a 'name' query parameter for a personalized message."
-                : $"Hello, {name}. Your Azure Function executed successfully.";
-
-            // Simulate some asynchronous processing (if needed)
-            await Task.Delay(100);
-
-            return new OkObjectResult(responseMessage);
+            host.Run();
         }
     }
 }
----------------------------------------------------------------
 
-âââââââââââââââââââââââââââââ
-2. local.settings.json
+âââââââââââââââââââââââââââââââ
+// Function1.cs
+using System.Net;
+using System.Threading.Tasks;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.ApplicationInsights;
 
-When running locally, include your Application Insights instrumentation key in your local settings file so that telemetry is captured. Create (or update) the local.settings.json file at the root of your project with content similar to:
-
----------------------------------------------------------------
+namespace MyFunctionApp
 {
-  "IsEncrypted": false,
-  "Values": {
-    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
-    "FUNCTIONS_WORKER_RUNTIME": "dotnet",
-    "APPINSIGHTS_INSTRUMENTATIONKEY": "YOUR_INSTRUMENTATION_KEY_HERE"
-  }
+    public class HttpExampleFunction
+    {
+        private readonly TelemetryClient _telemetryClient;
+
+        // The TelemetryClient is injected via dependency injection.
+        public HttpExampleFunction(TelemetryClient telemetryClient)
+        {
+            _telemetryClient = telemetryClient;
+        }
+
+        [Function("HttpExampleFunction")]
+        public async Task<HttpResponseData> Run(
+            [HttpTrigger(AuthorizationLevel.Function, "get", "post")] HttpRequestData req,
+            FunctionContext executionContext)
+        {
+            // Get the logger from the FunctionContext.
+            var logger = executionContext.GetLogger("HttpExampleFunction");
+            logger.LogInformation("Processing an HTTP request...");
+
+            // Track a custom event via Application Insights.
+            _telemetryClient.TrackEvent("HttpExampleFunctionTriggered");
+
+            // Create a response with a simple text payload.
+            HttpResponseData response = req.CreateResponse(HttpStatusCode.OK);
+            response.Headers.Add("Content-Type", "text/plain; charset=utf-8");
+            await response.WriteStringAsync("Hello from Azure Functions using Application Insights!");
+
+            return response;
+        }
+    }
 }
----------------------------------------------------------------
