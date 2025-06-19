@@ -1,0 +1,65 @@
+# Copy-MissingPaths.ps1
+[CmdletBinding()]
+param()
+
+# Define your sourceâdestination mappings here:
+$paths = @{
+    'C:\Temp\FolderA' = 'D:\Backup\FolderA'
+    'C:\Temp\FolderB' = 'D:\Backup\FolderB'
+    # add more pairs as needed
+}
+
+foreach ($source in $paths.Keys) {
+    $dest = $paths[$source]
+
+    Write-Host "`nProcessing:`n  Source      = $source`n  Destination = $dest" -ForegroundColor Cyan
+
+    # 1) Does source exist?
+    if (-not (Test-Path $source)) {
+        Write-Warning "Source '$source' does not exist. Skipping."
+        continue
+    }
+
+    # 2) If dest doesn't exist, copy entire source
+    if (-not (Test-Path $dest)) {
+        Write-Host "Destination '$dest' not found. Copying entire tree..." -ForegroundColor Yellow
+        try {
+            Copy-Item -Path $source `
+                      -Destination $dest `
+                      -Recurse `
+                      -Force `
+                      -ErrorAction Stop
+            Write-Host "Copied full tree from '$source' to '$dest'." -ForegroundColor Green
+        }
+        catch {
+            Write-Error "Failed to copy '$source' to '$dest'. $_"
+        }
+        continue
+    }
+
+    # 3) Destination exists, only copy missing directories & files
+    Write-Host "Destination exists. Scanning for missing items..." -ForegroundColor Yellow
+
+    # a) Recreate missing directories
+    Get-ChildItem -Path $source -Recurse -Directory | ForEach-Object {
+        # Compute relative path under source
+        $rel = $_.FullName.Substring($source.Length).TrimStart('\')
+        $targetDir = Join-Path $dest $rel
+        if (-not (Test-Path $targetDir)) {
+            New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+            Write-Host "Created directory: $targetDir"
+        }
+    }
+
+    # b) Copy missing files
+    Get-ChildItem -Path $source -Recurse -File | ForEach-Object {
+        $rel      = $_.FullName.Substring($source.Length).TrimStart('\')
+        $target   = Join-Path $dest $rel
+        if (-not (Test-Path $target)) {
+            Copy-Item -Path $_.FullName -Destination $target -Force
+            Write-Host "Copied file: $($_.FullName) â $target"
+        }
+    }
+}
+
+Write-Host "`nAll operations complete." -ForegroundColor Cyan
