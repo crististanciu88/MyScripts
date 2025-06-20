@@ -1,0 +1,100 @@
+```powershell
+# 1. CONFIGURATION
+# Replace these with your values:
+$resourceGroup         = "myResourceGroup"
+$automationAccountName = "myAutomationAccount"
+$runbookName           = "MyRunbook"
+# If your runbook takes parameters, define a hashtable here:
+# e.g. $runbookParams = @{ "VMName" = "testvm"; "Action" = "Start" }
+$runbookParams         = @{}
+
+# 2. (Optional) login â if you already have 'az login' done, skip this
+Write-Host "Logging in to Azure..."
+az account show > $null 2>&1
+if ($LASTEXITCODE -ne 0) {
+    az login | Out-Null
+}
+
+# 3. START THE RUNBOOK
+Write-Host "Starting runbook '$runbookName' in Automation Account '$automationAccountName'..."
+# Build the --parameters string if you have any
+if ($runbookParams.Count -gt 0) {
+    $paramArgs = $runbookParams.GetEnumerator() |
+                 ForEach-Object { "$($_.Key)=$($_.Value)" } |
+                 Join-String " "
+} else {
+    $paramArgs = ""
+}
+
+# Start the runbook, capture the jobId
+$jobId = az automation runbook start `
+    --resource-group      $resourceGroup `
+    --automation-account  $automationAccountName `
+    --name                $runbookName `
+    --parameters          $paramArgs `
+    --query               "jobId" `
+    -o tsv
+
+if (-not $jobId) {
+    Write-Error "Failed to start runbook."
+    exit 1
+}
+Write-Host "Runbook started. Job ID: $jobId"
+
+# 4. WAIT FOR JOB TO COMPLETE
+Write-Host "Waiting for job to finish..."
+az automation job wait `
+    --resource-group     $resourceGroup `
+    --automation-account $automationAccountName `
+    --job-id             $jobId `
+    --timeout            600 `
+    --interval           5
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Job wait returned non-zero exit code; it may have timed out or failed."
+}
+
+# 5. FETCH JOB OUTPUT STREAMS
+Write-Host "Retrieving job outputs (Output, Warning, Error streams)..."
+# This returns an array of objects with 'streamType' & 'streamText'
+$outputs = az automation job output list `
+    --resource-group     $resourceGroup `
+    --automation-account $automationAccountName `
+    --job-id             $jobId `
+    --query              "[].{Type:streamType,Text:streamText}" `
+    -o json | ConvertFrom-Json
+
+if (-not $outputs) {
+    Write-Warning "No output streams were produced."
+} else {
+    foreach ($line in $outputs) {
+        switch ($line.Type) {
+            "Error"   { Write-Error   $line.Text; break }
+            "Warning" { Write-Warning $line.Text; break }
+            default   { Write-Host    $line.Text; break }
+        }
+    }
+}
+
+# 6. (Optional) GET FINAL JOB STATUS
+$finalStatus = az automation job show `
+    --resource-group     $resourceGroup `
+    --automation-account $automationAccountName `
+    --job-id             $jobId `
+    --query              "status" `
+    -o tsv
+
+Write-Host "Job $jobId finished with status: $finalStatus"
+```
+
+How it works, step by step:
+
+1. You set your Azure resourceâgroup, Automation account name, runbook name and any parameters.
+2. Optionally do `az login` if you arenât already authenticated.
+3. Call `az automation runbook start â¦` and capture the returned `jobId`.
+4. Use `az automation job wait â¦` to block until the job completes (or times out).
+5. Once done, call `az automation job output list â¦` to pull back every stream entry (Output, Warning, Error).
+6. Loop through the streams and write them to the console with the appropriate severity.
+7. Finally, you can also query the jobâs final status (`Completed`, `Failed`, etc.).
+
+This gives you a simple, endâtoâend script that starts a runbook and prints out whatever it logged.
