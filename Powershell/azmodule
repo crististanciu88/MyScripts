@@ -1,0 +1,74 @@
+Hereâs a proven pattern for âexportingâ the Az PowerShell module (and all of its dependencies) from an Internetâconnected machine, copying it to an offline machine, and âinstallingâ it there:
+
+ 1. On your Internet-connected server
+
+    a. Open an elevated PowerShell session (run as Administrator).  
+    b. Create a folder to stage your modules.  
+       ```powershell
+       $staging = 'C:\OfflinePSModules'
+       if (!(Test-Path $staging)) { New-Item -Path $staging -ItemType Directory | Out-Null }
+       ```  
+    c. Use Save-Module (PowerShellGet v2+) to pull down Az and its dependencies:  
+       ```powershell
+       Save-Module -Name Az `
+                   -Repository PSGallery `
+                   -Path $staging `
+                   -IncludeDependencies `
+                   -Force
+       ```
+       This will create subfolders in C:\OfflinePSModules\Az, Az.Accounts, Az.Resources, etc.
+
+    d. (Optional but recommended) Grab the latest PowerShellGet, PackageManagement and the NuGet provider, so your offline box wonât be missing them:
+       ```powershell
+       Save-Module -Name PowerShellGet,PackageManagement `
+                   -Repository PSGallery `
+                   -Path $staging `
+                   -Force
+
+       # NuGet provider is a âpackage provider,â not a module:
+       Save-PackageProvider -Name NuGet -Path $staging -Force
+       ```
+
+    e. Copy the entire contents of C:\OfflinePSModules to your offline machine (USB drive, ISO, file share, etc.).
+
+ 2. On your Offline server
+
+    a. Pick a permanent location for your offline repoâe.g. D:\PSRepoâand copy all of the folders under C:\OfflinePSModules here.
+    b. Open an elevated PowerShell session.
+    c. (Option A) Register your local folder as a repository and use Install-Module:
+
+       ```powershell
+       Register-PSRepository -Name LocalPSRepo `
+                             -SourceLocation 'D:\PSRepo' `
+                             -InstallationPolicy Trusted
+
+       # If PowerShellGet or PackageManagement arenât yet installed on this box,
+       # install them first from your local repo:
+       Install-Module -Name PowerShellGet,PackageManagement `
+                      -Repository LocalPSRepo `
+                      -Force
+
+       # Ensure the NuGet provider is available (bootstrap from your local path):
+       Install-PackageProvider -Name NuGet `
+                               -Source 'D:\PSRepo' `
+                               -Force
+
+       # Finally install Az from the local repo:
+       Install-Module -Name Az `
+                      -Repository LocalPSRepo `
+                      -Force
+       ```
+
+    d. (Option B) If youâd rather skip registering a PSRepository, you can simply copy the module folders directly into one of your PSModulePath locations (e.g. C:\Program Files\WindowsPowerShell\Modules or %USERPROFILE%\Documents\WindowsPowerShell\Modules):
+
+       ```powershell
+       Copy-Item -Path 'D:\PSRepo\*' `
+                 -Destination 'C:\Program Files\WindowsPowerShell\Modules' `
+                 -Recurse -Force
+       ```
+
+       After that you can simply do:
+
+       ```powershell
+       Import-Module Az
+       ```
