@@ -1,0 +1,41 @@
+
+# load the MWAD assembly (no Import-Module WebAdministration)
+[void][Reflection.Assembly]::LoadWithPartialName("Microsoft.Web.Administration")
+
+# instantiate the ServerManager
+$sm = [Microsoft.Web.Administration.ServerManager]::new()
+
+# collect
+$results = foreach ($site in $sm.Sites) {
+    # get the root application ("/")
+    $app = $site.Applications["/"]
+    $poolName = $app.ApplicationPoolName
+    $pool = $sm.ApplicationPools[$poolName]
+
+    # resolve identity string
+    $identity = switch ($pool.ProcessModel.IdentityType) {
+        "SpecificUser" { $pool.ProcessModel.UserName }
+        default        { $pool.ProcessModel.IdentityType.ToString() }
+    }
+
+    # physical path of the root vdir
+    $physicalPath = $app.VirtualDirectories["/"].PhysicalPath
+
+    # one object per binding
+    foreach ($b in $site.Bindings) {
+        [PSCustomObject]@{
+            SiteName            = $site.Name
+            SiteState           = $site.State.ToString()
+            AppPoolName         = $poolName
+            AppPoolState        = $pool.State.ToString()
+            Runtime             = $pool.ManagedRuntimeVersion
+            AppPoolIdentity     = $identity
+            BindingInformation  = $b.BindingInformation
+            Protocol            = $b.Protocol
+            PhysicalPath        = $physicalPath
+        }
+    }
+}
+
+# output or pipe to Export-Csv, Format-Table, etc.
+$results
