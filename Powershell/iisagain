@@ -1,41 +1,42 @@
 
-# load the MWAD assembly (no Import-Module WebAdministration)
-[void][Reflection.Assembly]::LoadWithPartialName("Microsoft.Web.Administration")
+# Get all IIS sites
+$iisSites = Get-IISSite
 
-# instantiate the ServerManager
-$sm = [Microsoft.Web.Administration.ServerManager]::new()
+# Initialize an array to store our results
+$siteInfoCollection = @()
 
-# collect
-$results = foreach ($site in $sm.Sites) {
-    # get the root application ("/")
-    $app = $site.Applications["/"]
-    $poolName = $app.ApplicationPoolName
-    $pool = $sm.ApplicationPools[$poolName]
+foreach ($site in $iisSites) {
+    # Get the application pool for this site
+    $appPoolName = $site.Applications[0].ApplicationPoolName
+    $appPool = Get-IISAppPool -Name $appPoolName
 
-    # resolve identity string
-    $identity = switch ($pool.ProcessModel.IdentityType) {
-        "SpecificUser" { $pool.ProcessModel.UserName }
-        default        { $pool.ProcessModel.IdentityType.ToString() }
-    }
+    # Get bindings information
+    $bindings = $site.Bindings
+    $bindingInfo = @()
 
-    # physical path of the root vdir
-    $physicalPath = $app.VirtualDirectories["/"].PhysicalPath
-
-    # one object per binding
-    foreach ($b in $site.Bindings) {
-        [PSCustomObject]@{
-            SiteName            = $site.Name
-            SiteState           = $site.State.ToString()
-            AppPoolName         = $poolName
-            AppPoolState        = $pool.State.ToString()
-            Runtime             = $pool.ManagedRuntimeVersion
-            AppPoolIdentity     = $identity
-            BindingInformation  = $b.BindingInformation
-            Protocol            = $b.Protocol
-            PhysicalPath        = $physicalPath
+    foreach ($binding in $bindings) {
+        $bindingInfo += @{
+            Protocol = $binding.Protocol
+            BindingInformation = $binding.BindingInformation
         }
     }
+
+    # Create a custom object with all the required properties
+    $siteInfo = [PSCustomObject]@{
+        SiteName = $site.Name
+        SiteState = $site.State
+        AppPoolName = $appPoolName
+        AppPoolState = $appPool.State
+        Runtime = $appPool.ManagedRuntimeVersion
+        AppPoolIdentity = $appPool.ProcessModel.IdentityType
+        BindingInformation = ($bindingInfo.BindingInformation -join "; ")
+        Protocol = ($bindingInfo.Protocol -join "; ")
+        PhysicalPath = $site.Applications[0].VirtualDirectories[0].PhysicalPath
+    }
+
+    # Add to our collection
+    $siteInfoCollection += $siteInfo
 }
 
-# output or pipe to Export-Csv, Format-Table, etc.
-$results
+# Output the results
+$siteInfoCollection | Format-Table -AutoSize
