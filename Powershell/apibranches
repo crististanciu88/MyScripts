@@ -1,84 +1,132 @@
-# Parameters
-$GitLabUrl = "https://gitlab.com/api/v4"  # Change if using self-hosted GitLab
-$PrivateToken = "your-personal-access-token"  # Replace with your PAT
-$ProjectIds = @(123, 456, 789)  # Replace with your project IDs
+<#
+.SYNOPSIS
+    Script to analyze GitLab projects for release branches, their status, and merge requests.
+.DESCRIPTION
+    This script uses the GitLab API to gather information about branches starting with "rel"
+    across multiple projects, including their last commit details and merge request status.
+.NOTES
+    Requires:
+    - GitLab Personal Access Token with appropriate permissions
+    - PowerShell 5.1 or later
+#>
+
+# Configuration
+$GitLabUrl = "https://gitlab.example.com" # Replace with your GitLab instance URL
+$AccessToken = "your-personal-access-token" # Replace with your PAT
+$ProjectIds = @(123, 456, 789) # Replace with your project IDs
 
 # Headers for API requests
 $headers = @{
-    "Private-Token" = $PrivateToken
+    "PRIVATE-TOKEN" = $AccessToken
 }
 
 # Initialize results array
 $results = @()
 
-foreach ($projectId in $ProjectIds) {
+# Function to get project name by ID
+function Get-ProjectName {
+    param($projectId)
     try {
-        Write-Host "Processing project ID: $projectId"
-        
-        # Get all branches starting with 'rel'
-        $branchesUrl = "$GitLabUrl/projects/$projectId/repository/branches?search=^rel"
-        $branches = Invoke-RestMethod -Uri $branchesUrl -Headers $headers -Method Get
-        
-        if ($branches.Count -eq 0) {
-            Write-Host "No release branches found for project $projectId"
-            continue
-        }
+        $response = Invoke-RestMethod -Uri "$GitLabUrl/api/v4/projects/$projectId" -Headers $headers -Method Get
+        return $response.name
+    }
+    catch {
+        Write-Warning "Failed to get project name for ID $projectId : $_"
+        return "Unknown Project"
+    }
+}
 
+# Function to get branches starting with 'rel'
+function Get-ReleaseBranches {
+    param($projectId)
+    try {
+        $branches = Invoke-RestMethod -Uri "$GitLabUrl/api/v4/projects/$projectId/repository/branches?search=^rel" -Headers $headers -Method Get
+        return $branches
+    }
+    catch {
+        Write-Warning "Failed to get branches for project $projectId : $_"
+        return $null
+    }
+}
+
+# Function to get open merge requests for a branch
+function Get-OpenMergeRequests {
+    param($projectId, $branchName)
+    try {
+        $mrs = Invoke-RestMethod -Uri "$GitLabUrl/api/v4/projects/$projectId/merge_requests?state=opened&source_branch=$branchName" -Headers $headers -Method Get
+        return $mrs
+    }
+    catch {
+        Write-Warning "Failed to get merge requests for branch $branchName in project $projectId : $_"
+        return $null
+    }
+}
+
+# Function to get last commit details
+function Get-LastCommit {
+    param($projectId, $branchName)
+    try {
+        $commit = Invoke-RestMethod -Uri "$GitLabUrl/api/v4/projects/$projectId/repository/branches/$branchName" -Headers $headers -Method Get
+        return $commit.commit
+    }
+    catch {
+        Write-Warning "Failed to get last commit for branch $branchName in project $projectId : $_"
+        return $null
+    }
+}
+
+# Main processing
+foreach ($projectId in $ProjectIds) {
+    $projectName = Get-ProjectName -projectId $projectId
+    $branches = Get-ReleaseBranches -projectId $projectId
+
+    if ($branches) {
         foreach ($branch in $branches) {
             $branchName = $branch.name
-            Write-Host "  Processing branch: $branchName"
+            $lastCommit = Get-LastCommit -projectId $projectId -branchName $branchName
+            $mergeRequests = Get-OpenMergeRequests -projectId $projectId -branchName $branchName
 
-            # Get the latest commit
-            $commitUrl = "$GitLabUrl/projects/$projectId/repository/commits/$($branch.commit.id)"
-            $commit = Invoke-RestMethod -Uri $commitUrl -Headers $headers -Method Get
+            $hasOpenMRs = if ($mergeRequests -and $mergeRequests.Count -gt 0) { "Yes" } else { "No" }
+            $mrCount = if ($mergeRequests) { $mergeRequests.Count } else { 0 }
 
-            # Get open merge requests for this branch
-            $mrUrl = "$GitLabUrl/projects/$projectId/merge_requests?state=opened&source_branch=$branchName"
-            $mergeRequests = Invoke-RestMethod -Uri $mrUrl -Headers $headers -Method Get
-
-            # Create result object
             $result = [PSCustomObject]@{
-                ProjectID      = $projectId
-                BranchName    = $branchName
-                LastCommit    = $commit.title
-                Author        = $commit.author_name
-                CommitDate    = $commit.committed_date
-                MRCount       = $mergeRequests.Count
-                MRs           = if ($mergeRequests.Count -gt 0) {
-                    ($mergeRequests | ForEach-Object { "!$($_.iid) $($_.title)" }) -join "`n"
-                } else { "None" }
+                ProjectName    = $projectName
+                ProjectId      = $projectId
+                BranchName     = $branchName
+                LastCommitDate = if ($lastCommit) { $lastCommit.committed_date } else { "Unknown" }
+                LastAuthor     = if ($lastCommit) { $lastCommit.author_name } else { "Unknown" }
+                LastMessage    = if ($lastCommit) { $lastCommit.message.Trim() } else { "Unknown" }
+                HasOpenMRs     = $hasOpenMRs
+                MRCount        = $mrCount
             }
 
             $results += $result
         }
     }
-    catch {
-        Write-Warning "Error processing project $projectId : $_"
+    else {
+        $result = [PSCustomObject]@{
+            ProjectName    = $projectName
+            ProjectId      = $projectId
+            BranchName     = "No release branches found"
+            LastCommitDate = "N/A"
+            LastAuthor     = "N/A"
+            LastMessage    = "N/A"
+            HasOpenMRs     = "N/A"
+            MRCount        = 0
+        }
+        $results += $result
     }
 }
 
 # Output results as a formatted table
-$results | Format-Table -AutoSize -Wrap -Property ProjectID, BranchName, Author, LastCommit, MRCount
+$results | Format-Table -AutoSize -Wrap -Property `
+    @{Label="Project"; Expression={$_.ProjectName}; Width=25},
+    @{Label="Branch"; Expression={$_.BranchName}; Width=20},
+    @{Label="Last Author"; Expression={$_.LastAuthor}; Width=20},
+    @{Label="Last Commit"; Expression={$_.LastCommitDate}; Width=25},
+    @{Label="Open MRs"; Expression={$_.HasOpenMRs}; Width=10},
+    @{Label="MR Count"; Expression={$_.MRCount}; Width=10},
+    @{Label="Last Message"; Expression={$_.LastMessage}; Width=40}
 
-# Optional: Export to CSV
-$results | Export-Csv -Path "GitLabReleaseBranchesReport.csv" -NoTypeInformation
-
-# Optional: Create a more visual chart
-if ($results.Count -gt 0) {
-    # Create a bar chart of branches per project
-    $chartData = $results | Group-Object ProjectID | ForEach-Object {
-        [PSCustomObject]@{
-            ProjectID = $_.Name
-            BranchCount = $_.Count
-        }
-    }
-
-    # Display chart using Out-ConsoleGridView if available
-    if (Get-Command -Name Out-ConsoleGridView -ErrorAction SilentlyContinue) {
-        $chartData | Out-ConsoleGridView -Title "Release Branches per Project"
-    } else {
-        $chartData | Format-Table -AutoSize
-    }
-} else {
-    Write-Host "No release branches found in any of the specified projects."
-}
+# Optionally export to CSV
+# $results | Export-Csv -Path "GitLabReleaseBranchesReport.csv" -NoTypeInformation
