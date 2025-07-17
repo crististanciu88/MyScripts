@@ -1,0 +1,396 @@
+#region Configuration
+$Config = @{
+    GitLabBaseUrl = "https://gitlab.example.com/api/v4"  # Change to your GitLab instance
+    GitLabToken = "your-gitlab-access-token"             # Replace with your token
+    GroupId = 123                                        # Replace with your group ID
+    EmailTo = "testdl@test.com"
+    EmailFrom = "gitlab-reports@yourdomain.com"
+    SmtpServer = "smtp.yourdomain.com"
+    LogFile = "GitLabBranchAnalysis.log"
+    HtmlReportFile = "GitLabBranchReport.html"
+}
+#endregion
+
+#region Logging Setup
+function Write-Log {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$Message,
+        [ValidateSet("INFO","WARNING","ERROR")]
+        [string]$Level="INFO"
+    )
+    
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logEntry = "[$timestamp] [$Level] $Message"
+    
+    try {
+        Add-Content -Path $Config.LogFile -Value $logEntry -ErrorAction Stop
+    }
+    catch {
+        Write-Host "Failed to write to log file: $_"
+        Write-Host $logEntry  # Fallback to console if logging fails
+    }
+    
+    if ($Level -eq "ERROR") { Write-Host $logEntry -ForegroundColor Red }
+    elseif ($Level -eq "WARNING") { Write-Host $logEntry -ForegroundColor Yellow }
+    else { Write-Host $logEntry }
+}
+
+# Initialize log file
+try {
+    New-Item -Path $Config.LogFile -ItemType File -Force -ErrorAction Stop | Out-Null
+    Write-Log "Script started. Logging initialized."
+}
+catch {
+    Write-Host "Failed to initialize log file: $_" -ForegroundColor Red
+    exit 1
+}
+#endregion
+
+#region GitLab API Functions
+function Invoke-GitLabApiRequest {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$Endpoint,
+        [string]$Method="GET",
+        [object]$Body=$null
+    )
+    
+    try {
+        $headers = @{
+            "PRIVATE-TOKEN" = $Config.GitLabToken
+            "Content-Type" = "application/json"
+        }
+        
+        $uri = "$($Config.GitLabBaseUrl)/$Endpoint"
+        Write-Log "Making $Method request to $uri"
+        
+        $params = @{
+            Uri = $uri
+            Method = $Method
+            Headers = $headers
+            ErrorAction = "Stop"
+        }
+        
+        if ($Body) {
+            $params["Body"] = $Body | ConvertTo-Json -Depth 5
+        }
+        
+        $response = Invoke-RestMethod @params
+        
+        # Handle pagination (GitLab returns Link header for paginated results)
+        if ($response -is [array] -and $response.Count -eq 20) {  # GitLab default per_page is 20
+            $allResults = [System.Collections.ArrayList]@($response)
+            $nextPage = 2
+            
+            while ($true) {
+                try {
+                    $pagedUri = "$uri&page=$nextPage"
+                    $pagedResponse = Invoke-RestMethod -Uri $pagedUri -Method $Method -Headers $headers -ErrorAction Stop
+                    
+                    if ($pagedResponse -and $pagedResponse.Count -gt 0) {
+                        $null = $allResults.AddRange($pagedResponse)
+                        $nextPage++
+                    } else {
+                        break
+                    }
+                }
+                catch {
+                    Write-Log "Pagination stopped at page $nextPage: $_" -Level "WARNING"
+                    break
+                }
+            }
+            
+            return $allResults
+        }
+        
+        return $response
+    }
+    catch {
+        Write-Log "API request failed for $Endpoint : $_" -Level "ERROR"
+        throw $_
+    }
+}
+
+function Get-GitLabGroupProjects {
+    param (
+        [Parameter(Mandatory=$true)]
+        [int]$GroupId
+    )
+    
+    try {
+        Write-Log "Fetching projects for group ID $GroupId"
+        $projects = Invoke-GitLabApiRequest -Endpoint "groups/$GroupId/projects?include_subgroups=true"
+        Write-Log "Found $($projects.Count) projects in group"
+        return $projects
+    }
+    catch {
+        Write-Log "Failed to get group projects: $_" -Level "ERROR"
+        throw $_
+    }
+}
+
+function Get-GitLabProjectBranches {
+    param (
+        [Parameter(Mandatory=$true)]
+        [int]$ProjectId,
+        [string]$SearchPattern
+    )
+    
+    try {
+        Write-Log "Fetching branches for project ID $ProjectId with pattern '$SearchPattern'"
+        
+        # Encode the search pattern (handles rel/ case)
+        $encodedPattern = [System.Web.HttpUtility]::UrlEncode($SearchPattern)
+        $branches = Invoke-GitLabApiRequest -Endpoint "projects/$ProjectId/repository/branches?search=^$encodedPattern"
+        
+        Write-Log "Found $($branches.Count) branches matching pattern '$SearchPattern' in project $ProjectId"
+        return $branches
+    }
+    catch {
+        Write-Log "Failed to get project branches: $_" -Level "ERROR"
+        throw $_
+    }
+}
+
+function Get-GitLabBranchStatus {
+    param (
+        [Parameter(Mandatory=$true)]
+        [int]$ProjectId,
+        [Parameter(Mandatory=$true)]
+        [string]$BranchName,
+        [Parameter(Mandatory=$true)]
+        [string]$CommitSha
+    )
+    
+    try {
+        # Check if branch is merged into master
+        $isMerged = $false
+        try {
+            $mergeStatus = Invoke-GitLabApiRequest -Endpoint "projects/$ProjectId/repository/commits/$CommitSha/merge_requests" -ErrorAction SilentlyContinue
+            $isMerged = ($mergeStatus | Where-Object { $_.state -eq "merged" -and $_.target_branch -eq "master" }) -ne $null
+        }
+        catch {
+            Write-Log "Merge check failed for $BranchName ($CommitSha): $_" -Level "WARNING"
+        }
+        
+        # Check for open merge requests
+        $hasOpenMRs = $false
+        try {
+            $openMRs = Invoke-GitLabApiRequest -Endpoint "projects/$ProjectId/merge_requests?source_branch=$BranchName&state=opened"
+            $hasOpenMRs = $openMRs.Count -gt 0
+        }
+        catch {
+            Write-Log "Open MR check failed for $BranchName: $_" -Level "WARNING"
+        }
+        
+        return @{
+            IsInMaster = $isMerged
+            HasOpenMRs = $hasOpenMRs
+        }
+    }
+    catch {
+        Write-Log "Failed to get branch status: $_" -Level "ERROR"
+        throw $_
+    }
+}
+#endregion
+
+#region Report Generation
+function Generate-HTMLReport {
+    param (
+        [Parameter(Mandatory=$true)]
+        [array]$BranchData
+    )
+    
+    try {
+        Write-Log "Generating HTML report with $($BranchData.Count) branch records"
+        
+        # Create HTML header with styles
+        $htmlHeader = @"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GitLab Branch Analysis Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #2e6c80; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th { background-color: #2e6c80; color: white; text-align: left; padding: 8px; }
+        td { padding: 8px; border-bottom: 1px solid #ddd; }
+        tr:nth-child(even) { background-color: #f2f2f2; }
+        .merged { background-color: #d4edda; }
+        .unmerged { background-color: #f8d7da; }
+        .open-mr { font-weight: bold; color: #155724; }
+        .report-date { font-style: italic; color: #6c757d; }
+    </style>
+</head>
+<body>
+    <h1>GitLab Branch Analysis Report</h1>
+    <p class="report-date">Generated on $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")</p>
+    <table>
+        <thead>
+            <tr>
+                <th>Project</th>
+                <th>Branch</th>
+                <th>Last Commit Date</th>
+                <th>Author</th>
+                <th>Status</th>
+                <th>Open MRs</th>
+            </tr>
+        </thead>
+        <tbody>
+"@
+
+        # Create HTML rows for each branch
+        $htmlRows = New-Object System.Text.StringBuilder
+        foreach ($branch in $BranchData) {
+            $rowClass = if ($branch.IsInMaster) { "merged" } else { "unmerged" }
+            $mrStatus = if ($branch.HasOpenMRs) { '<span class="open-mr">Yes</span>' } else { "No" }
+            $commitDate = [datetime]$branch.LastCommitDate | Get-Date -Format "yyyy-MM-dd HH:mm"
+            
+            $null = $htmlRows.AppendLine(@"
+            <tr class="$rowClass">
+                <td>$($branch.ProjectName)</td>
+                <td>$($branch.BranchName)</td>
+                <td>$commitDate</td>
+                <td>$($branch.LastAuthor)</td>
+                <td>$(if ($branch.IsInMaster) { "Merged to master" } else { "Not merged" })</td>
+                <td>$mrStatus</td>
+            </tr>
+"@)
+        }
+
+        # HTML footer
+        $htmlFooter = @"
+        </tbody>
+    </table>
+    <p>Total branches analyzed: $($BranchData.Count)</p>
+</body>
+</html>
+"@
+
+        # Combine all parts
+        $fullHtml = $htmlHeader + $htmlRows.ToString() + $htmlFooter
+        
+        # Save to file
+        $fullHtml | Out-File -FilePath $Config.HtmlReportFile -Force
+        Write-Log "HTML report saved to $($Config.HtmlReportFile)"
+        
+        return $fullHtml
+    }
+    catch {
+        Write-Log "Failed to generate HTML report: $_" -Level "ERROR"
+        throw $_
+    }
+}
+
+function Send-EmailReport {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$HtmlContent
+    )
+    
+    try {
+        Write-Log "Preparing to send email to $($Config.EmailTo)"
+        
+        $emailParams = @{
+            From = $Config.EmailFrom
+            To = $Config.EmailTo
+            Subject = "GitLab Branch Analysis Report - $(Get-Date -Format 'yyyy-MM-dd')"
+            Body = $HtmlContent
+            BodyAsHtml = $true
+            SmtpServer = $Config.SmtpServer
+            ErrorAction = "Stop"
+        }
+        
+        # Add attachment if needed (uncomment if you want to attach the HTML file)
+        # $emailParams["Attachments"] = $Config.HtmlReportFile
+        
+        Send-MailMessage @emailParams
+        Write-Log "Email sent successfully to $($Config.EmailTo)"
+    }
+    catch {
+        Write-Log "Failed to send email: $_" -Level "ERROR"
+        throw $_
+    }
+}
+#endregion
+
+#region Main Script Execution
+try {
+    Write-Log "Starting GitLab branch analysis process"
+    
+    # Step 1: Get all projects in the group
+    $projects = Get-GitLabGroupProjects -GroupId $Config.GroupId
+    $branchData = @()
+    
+    # Step 2-3: Process each project and its branches
+    foreach ($project in $projects) {
+        try {
+            Write-Log "Processing project: $($project.name) (ID: $($project.id))"
+            
+            # Get branches starting with 'rel' or 'CHG' (including 'rel/')
+            $branchPatterns = @('rel*', 'CHG*', 'rel%2F*')  # %2F is URL-encoded /
+            $allBranches = @()
+            
+            foreach ($pattern in $branchPatterns) {
+                try {
+                    $branches = Get-GitLabProjectBranches -ProjectId $project.id -SearchPattern $pattern
+                    $allBranches += $branches
+                }
+                catch {
+                    Write-Log "Failed to get branches for pattern $pattern in project $($project.name): $_" -Level "WARNING"
+                    continue
+                }
+            }
+            
+            # Remove duplicates (in case multiple patterns matched the same branch)
+            $uniqueBranches = $allBranches | Sort-Object -Property name -Unique
+            
+            foreach ($branch in $uniqueBranches) {
+                try {
+                    Write-Log "Processing branch: $($branch.name)"
+                    
+                    # Get branch status
+                    $status = Get-GitLabBranchStatus -ProjectId $project.id -BranchName $branch.name -CommitSha $branch.commit.id
+                    
+                    # Add to our collection
+                    $branchData += [PSCustomObject]@{
+                        ProjectName = $project.name
+                        BranchName = $branch.name
+                        LastCommitDate = $branch.commit.committed_date
+                        LastAuthor = $branch.commit.author_name
+                        HasOpenMRs = $status.HasOpenMRs
+                        IsInMaster = $status.IsInMaster
+                    }
+                }
+                catch {
+                    Write-Log "Failed to process branch $($branch.name): $_" -Level "WARNING"
+                    continue
+                }
+            }
+        }
+        catch {
+            Write-Log "Failed to process project $($project.name): $_" -Level "ERROR"
+            continue
+        }
+    }
+    
+    # Step 4: Generate HTML report
+    if ($branchData.Count -gt 0) {
+        $htmlReport = Generate-HTMLReport -BranchData $branchData
+        
+        # Step 5: Send email with the report
+        Send-EmailReport -HtmlContent $htmlReport
+    } else {
+        Write-Log "No branches matching criteria were found." -Level "WARNING"
+    }
+    
+    Write-Log "Script completed successfully"
+}
+catch {
+    Write-Log "Script failed: $_" -Level "ERROR"
+    exit 1
+}
+#endregion
