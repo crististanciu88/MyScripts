@@ -168,7 +168,7 @@ function Get-GitLabBranchStatus {
         $isMerged = $false
         try {
             $mergeStatus = Invoke-GitLabApiRequest -Endpoint "projects/$ProjectId/repository/commits/$CommitSha/merge_requests" -ErrorAction SilentlyContinue
-            $isMerged = ($mergeStatus | Where-Object { $_.state -eq "merged" -and $_.target_branch -eq "master" }) -ne $null
+            $isMerged = ($mergeStatus | Where-Object { $_.state -eq "merged" -and $_.target_branch -eq "master" -or $_.target_branch -eq }) -ne $null
         }
         catch {
             Write-Log "Merge check failed for $BranchName ($CommitSha): $_" -Level "WARNING"
@@ -178,7 +178,7 @@ function Get-GitLabBranchStatus {
         $hasOpenMRs = $false
         try {
             $openMRs = Invoke-GitLabApiRequest -Endpoint "projects/$ProjectId/merge_requests?source_branch=$BranchName&state=opened"
-            $hasOpenMRs = $openMRs.Count -gt 0
+            $hasOpenMRs = $openMRs.id.Count -gt 0
         }
         catch {
             Write-Log "Open MR check failed for $BranchName: $_" -Level "WARNING"
