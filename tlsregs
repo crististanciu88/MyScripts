@@ -1,0 +1,215 @@
+function Set-RegistrySecurityConfig {
+    <#
+    .SYNOPSIS
+    Backs up HKLM registry and configures security protocols according to specified requirements.
+    
+    .DESCRIPTION
+    This function creates a backup of HKLM registry, then ensures specific security protocol
+    settings are properly configured for TLS/SSL protocols.
+    
+    .EXAMPLE
+    Set-RegistrySecurityConfig
+    
+    .NOTES
+    Requires administrative privileges to modify HKLM registry.
+    #>
+    
+    param(
+        [string]$BackupPath = ".\HKLM_Backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').reg"
+    )
+    
+    # Check if running as administrator
+    if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        Write-Error "This function requires administrative privileges. Please run PowerShell as Administrator."
+        return
+    }
+    
+    # Backup HKLM registry
+    try {
+        Write-Host "Backing up HKLM registry to: $BackupPath" -ForegroundColor Yellow
+        reg export HKLM $BackupPath /y
+        Write-Host "Backup completed successfully." -ForegroundColor Green
+    }
+    catch {
+        Write-Error "Failed to create registry backup: $($_.Exception.Message)"
+        return
+    }
+
+    # Define registry settings that should be enabled (value = 1)
+    $enableSettings = @(
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 1
+            Description = "Enable TLS 1.2 Server"
+        },
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 1
+            Description = "Enable TLS 1.2 Client"
+        },
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Server"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 1
+            Description = "Enable TLS 1.3 Server"
+        },
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.3\Client"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 1
+            Description = "Enable TLS 1.3 Client"
+        }
+    )
+
+    # Define registry settings that should be disabled (value = 0)
+    $disableSettings = @(
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Server"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 0
+            Description = "Disable SSL 2.0 Server"
+        },
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Client"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 0
+            Description = "Disable SSL 2.0 Client"
+        },
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Server"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 0
+            Description = "Disable SSL 3.0 Server"
+        },
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 3.0\Client"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 0
+            Description = "Disable SSL 3.0 Client"
+        },
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 0
+            Description = "Disable TLS 1.0 Server"
+        },
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 0
+            Description = "Disable TLS 1.0 Client"
+        },
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Server"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 0
+            Description = "Disable TLS 1.1 Server"
+        },
+        @{
+            Path = "HKLM:\System\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.1\Client"
+            Name = "Enabled"
+            Type = "DWORD"
+            Value = 0
+            Description = "Disable TLS 1.1 Client"
+        }
+    )
+
+    # Function to process registry settings
+    function Set-RegistryValue {
+        param(
+            [hashtable]$Setting
+        )
+
+        $path = $Setting.Path
+        $name = $Setting.Name
+        $type = $Setting.Type
+        $desiredValue = $Setting.Value
+        $description = $Setting.Description
+
+        Write-Host "`nProcessing: $description" -ForegroundColor Cyan
+        Write-Host "Path: $path" -ForegroundColor Gray
+        Write-Host "Value: $name = $desiredValue" -ForegroundColor Gray
+
+        # Check if registry path exists
+        if (-not (Test-Path $path)) {
+            try {
+                Write-Host "Creating registry path..." -ForegroundColor Yellow
+                New-Item -Path $path -Force | Out-Null
+                Write-Host "Path created successfully." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to create registry path: $($_.Exception.Message)"
+                return
+            }
+        }
+
+        # Get current value if it exists
+        $currentValue = $null
+        try {
+            $currentValue = Get-ItemProperty -Path $path -Name $name -ErrorAction SilentlyContinue
+        }
+        catch {
+            # Property doesn't exist, which is fine
+        }
+
+        if ($currentValue -and $currentValue.$name -eq $desiredValue) {
+            Write-Host "â Already configured correctly." -ForegroundColor Green
+        }
+        else {
+            try {
+                if ($currentValue) {
+                    Write-Host "Updating value from $($currentValue.$name) to $desiredValue..." -ForegroundColor Yellow
+                }
+                else {
+                    Write-Host "Creating new value..." -ForegroundColor Yellow
+                }
+
+                Set-ItemProperty -Path $path -Name $name -Value $desiredValue -Type $type -Force
+                Write-Host "â Successfully configured." -ForegroundColor Green
+            }
+            catch {
+                Write-Error "Failed to set registry value: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    # Process all enable settings
+    Write-Host "`n" + "="*60 -ForegroundColor Magenta
+    Write-Host "ENABLING SECURITY PROTOCOLS" -ForegroundColor Magenta
+    Write-Host "="*60 -ForegroundColor Magenta
+
+    foreach ($setting in $enableSettings) {
+        Set-RegistryValue -Setting $setting
+    }
+
+    # Process all disable settings
+    Write-Host "`n" + "="*60 -ForegroundColor Magenta
+    Write-Host "DISABLING SECURITY PROTOCOLS" -ForegroundColor Magenta
+    Write-Host "="*60 -ForegroundColor Magenta
+
+    foreach ($setting in $disableSettings) {
+        Set-RegistryValue -Setting $setting
+    }
+
+    Write-Host "`n" + "="*60 -ForegroundColor Green
+    Write-Host "PROCESSING COMPLETED" -ForegroundColor Green
+    Write-Host "Registry backup saved to: $BackupPath" -ForegroundColor Green
+    Write-Host "="*60 -ForegroundColor Green
+    Write-Host "Note: Some changes may require a reboot to take effect." -ForegroundColor Yellow
+}
+
+# Export the function if this is part of a module
+# Export-ModuleMember -Function Set-RegistrySecurityConfig
