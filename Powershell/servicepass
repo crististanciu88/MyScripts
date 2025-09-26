@@ -1,104 +1,156 @@
-[CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$ConfigPath,
-
-    [Parameter(Mandatory = $true, ParameterSetName = 'Failover')]
-    [switch]$Failover,
-
-    [Parameter(Mandatory = $true, ParameterSetName = 'Fallback')]
-    [switch]$Fallback
+    [Parameter(Mandatory=$true)]
+    [ValidateSet("Failover", "Fallback")]
+    [string]$Mode
 )
 
-# Ensure the file exists
-if (-not (Test-Path -Path $ConfigPath)) {
-    Write-Error "Config file not found: $ConfigPath"
-    exit 1
-}
+# Define server variables
+$failoverServer = "failoverserver.com"
+$fallbackServer = "fallbackserver.com"
 
-# Validate mutual exclusivity (PowerShell parameter sets enforce this)
-$targetServer = $null
-if ($PSCmdlet.ParameterSetName -eq 'Failover') {
-    $targetServer = 'testfailover.com'
-} elseif ($PSCmdlet.ParameterSetName -eq 'Fallback') {
-    $targetServer = 'testfallback.com'
-} else {
-    Write-Error "Specify either -Failover or -Fallback."
-    exit 1
-}
+# Configuration file path
+$configFile = "your-config-file.xml"  # Replace with your actual config file path
 
-# 1) Backup the current configuration if no BCM backup exists
-$dir  = Split-Path $ConfigPath -Parent
-$name = [IO.Path]::GetFileName($ConfigPath)
-$base = [IO.Path]::GetFileNameWithoutExtension($ConfigPath)
-$ext  = [IO.Path]::GetExtension($ConfigPath)
-
-# Check for existing BCM backups (names containing BCM)
-$existingBCMBackups = Get-ChildItem -Path $dir -Filter "*BCM*" -File -ErrorAction SilentlyContinue
-
-if (-not $existingBCMBackups -or $existingBCMBackups.Count -eq 0) {
-    $backupPath = Join-Path $dir ("{0}.BCM_{1}{2}" -f $base, (Get-Date -Format 'yyyyMMddHHmmss'), $ext)
-    Copy-Item -Path $ConfigPath -Destination $backupPath -ErrorAction Stop
-    Write-Host "Backup created: $backupPath"
-} else {
-    Write-Host "BCM backup already exists. Skipping backup."
-}
-
-# 2) Update QueryCache value
-# Load XML
-try {
-    $xmlDoc = New-Object -TypeName System.Xml.XmlDocument
-    $xmlDoc.Load($ConfigPath)
-} catch {
-    Write-Error "Failed to load XML: $_"
-    exit 1
-}
-
-# Find QueryCache nodes
-$nodes = @()
-$node1 = $xmlDoc.SelectNodes("//*[@key='QueryCache']")
-$node2 = $xmlDoc.SelectNodes("//QueryCache")
-
-if ($node1) { $nodes += $node1 }
-if ($node2) { $nodes += $node2 }
-
-$nodes = $nodes | Where-Object { $_ -ne $null } | Select-Object -Unique
-
-if ($nodes.Count -eq 0) {
-    Write-Warning "No nodes found for QueryCache. No changes applied."
-} else {
-    foreach ($node in $nodes) {
-        # Prefer attribute 'value' if present (common for appSettings style)
-        $attr = $node.Attributes["value"]
-        if ($attr) {
-            $cur = $attr.Value
-            $newVal = $cur
-            if ($cur -like "*testfailover.com*") {
-                $newVal = $cur -replace "testfailover\.com", $targetServer
-            } elseif ($cur -like "*testfallback.com*") {
-                $newVal = $cur -replace "testfallback\.com", $targetServer
-            }
-            if ($newVal -ne $cur) {
-                $attr.Value = $newVal
-                Write-Host "Updated QueryCache value attribute: '$cur' -> '$newVal'"
-            }
-        } else {
-            # Fallback to inner text if no value attribute
-            $text = $node.InnerText
-            $newText = $text
-            if ($text -like "*testfailover.com*") {
-                $newText = $text -replace "testfailover\.com", $targetServer
-            } elseif ($text -like "*testfallback.com*") {
-                $newText = $text -replace "testfallback\.com", $targetServer
-            }
-            if ($newText -ne $text) {
-                $node.InnerText = $newText
-                Write-Host "Updated QueryCache inner text: '$text' -> '$newText'"
-            }
-        }
+# Function to create backup
+function Backup-ConfigFile {
+    param([string]$filePath)
+    
+    $backupDir = "Backups"
+    if (!(Test-Path $backupDir)) {
+        New-Item -ItemType Directory -Path $backupDir | Out-Null
     }
 
-    # Save changes
-    $xmlDoc.Save($ConfigPath)
-    Write-Host "QueryCache updated to use $targetServer."
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $backupFile = Join-Path $backupDir ("BCM_Backup_" + (Split-Path $filePath -Leaf) + "_" + $timestamp + ".xml")
+
+    try {
+        Copy-Item -Path $filePath -Destination $backupFile -Force
+        Write-Host "Backup created: $backupFile" -ForegroundColor Green
+        return $backupFile
+    }
+    catch {
+        Write-Error "Failed to create backup: $($_.Exception.Message)"
+        exit 1
+    }
 }
+
+# Function to check if backup already exists with BCM in name
+function Test-BCMBackupExists {
+    param([string]$filePath)
+
+    $backupDir = "Backups"
+    $fileName = Split-Path $filePath -Leaf
+    $bcmPattern = "BCM_Backup_$fileName*"
+
+    if (Test-Path $backupDir) {
+        $existingBackups = Get-ChildItem -Path $backupDir -Filter $bcmPattern
+        return ($existingBackups.Count -gt 0)
+    }
+    return $false
+}
+
+# Function to update server in configuration
+function Update-ServerInConfig {
+    param(
+        [string]$filePath,
+        [string]$oldServer,
+        [string]$newServer
+    )
+
+    try {
+        # Load the XML file
+        [xml]$config = Get-Content -Path $filePath
+
+        # Find the node with key="QueryCache"
+        $queryCacheNode = $config.SelectSingleNode("//add[@key='QueryCache']")
+
+        if ($queryCacheNode -eq $null) {
+            Write-Error "QueryCache node not found in configuration file"
+            return $false
+        }
+
+        # Get the current value
+        $currentValue = $queryCacheNode.GetAttribute("value")
+
+        if ($currentValue -eq $null) {
+            Write-Error "Value attribute not found in QueryCache node"
+            return $false
+        }
+
+        # Replace the server name
+        $newValue = $currentValue -replace $oldServer, $newServer
+
+        if ($currentValue -eq $newValue) {
+            Write-Warning "No changes made. Server '$oldServer' not found in the value."
+            return $false
+        }
+
+        # Update the value
+        $queryCacheNode.SetAttribute("value", $newValue)
+
+        # Save the modified XML
+        $config.Save($filePath)
+
+        Write-Host "Server updated successfully:" -ForegroundColor Green
+        Write-Host "Old value: $currentValue" -ForegroundColor Yellow
+        Write-Host "New value: $newValue" -ForegroundColor Green
+
+        return $true
+    }
+    catch {
+        Write-Error "Failed to update configuration: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+# Main script execution
+Write-Host "Starting configuration update in $Mode mode..." -ForegroundColor Cyan
+
+# Check if config file exists
+if (!(Test-Path $configFile)) {
+    Write-Error "Configuration file not found: $configFile"
+    exit 1
+}
+
+# Create backup if no BCM backup exists
+if (!(Test-BCMBackupExists -filePath $configFile)) {
+    Write-Host "Creating backup of current configuration..." -ForegroundColor Yellow
+    $backupFile = Backup-ConfigFile -filePath $configFile
+} else {
+    Write-Host "BCM backup already exists. Skipping backup creation." -ForegroundColor Yellow
+}
+
+# Determine which servers to use based on mode
+switch ($Mode) {
+    "Failover" {
+        $oldServer = $fallbackServer
+        $newServer = $failoverServer
+        Write-Host "Switching from $oldServer to $newServer" -ForegroundColor Cyan
+    }
+    "Fallback" {
+        $oldServer = $failoverServer
+        $newServer = $fallbackServer
+        Write-Host "Switching from $oldServer to $newServer" -ForegroundColor Cyan
+    }
+}
+
+# Update the configuration
+$success = Update-ServerInConfig -filePath $configFile -oldServer $oldServer -newServer $newServer
+
+if ($success) {
+    Write-Host "Configuration update completed successfully!" -ForegroundColor Green
+} else {
+    Write-Host "Configuration update completed with warnings or no changes." -ForegroundColor Yellow
+}
+
+Write-Host "Script execution completed." -ForegroundColor Cyan
+```
+
+## Usage Examples:
+
+```powershell
+# Switch to failover server
+.\ServerSwitch.ps1 -Mode Failover
+
+# Switch back to fallback server
+.\ServerSwitch.ps1 -Mode Fallback
