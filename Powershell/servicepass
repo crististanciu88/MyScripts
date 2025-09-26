@@ -1,50 +1,104 @@
-# Require administrative rights to read the HKLM service registry path
-$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Error "Administrator privileges are required to run this script."
-    return $null
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ConfigPath,
+
+    [Parameter(Mandatory = $true, ParameterSetName = 'Failover')]
+    [switch]$Failover,
+
+    [Parameter(Mandatory = $true, ParameterSetName = 'Fallback')]
+    [switch]$Fallback
+)
+
+# Ensure the file exists
+if (-not (Test-Path -Path $ConfigPath)) {
+    Write-Error "Config file not found: $ConfigPath"
+    exit 1
 }
 
+# Validate mutual exclusivity (PowerShell parameter sets enforce this)
+$targetServer = $null
+if ($PSCmdlet.ParameterSetName -eq 'Failover') {
+    $targetServer = 'testfailover.com'
+} elseif ($PSCmdlet.ParameterSetName -eq 'Fallback') {
+    $targetServer = 'testfallback.com'
+} else {
+    Write-Error "Specify either -Failover or -Fallback."
+    exit 1
+}
+
+# 1) Backup the current configuration if no BCM backup exists
+$dir  = Split-Path $ConfigPath -Parent
+$name = [IO.Path]::GetFileName($ConfigPath)
+$base = [IO.Path]::GetFileNameWithoutExtension($ConfigPath)
+$ext  = [IO.Path]::GetExtension($ConfigPath)
+
+# Check for existing BCM backups (names containing BCM)
+$existingBCMBackups = Get-ChildItem -Path $dir -Filter "*BCM*" -File -ErrorAction SilentlyContinue
+
+if (-not $existingBCMBackups -or $existingBCMBackups.Count -eq 0) {
+    $backupPath = Join-Path $dir ("{0}.BCM_{1}{2}" -f $base, (Get-Date -Format 'yyyyMMddHHmmss'), $ext)
+    Copy-Item -Path $ConfigPath -Destination $backupPath -ErrorAction Stop
+    Write-Host "Backup created: $backupPath"
+} else {
+    Write-Host "BCM backup already exists. Skipping backup."
+}
+
+# 2) Update QueryCache value
+# Load XML
 try {
-    # Construct the registry path for the service:
-    # This assumes that your service’s configuration is stored in:
-    # HKLM:\SYSTEM\CurrentControlSet\Services\<ServiceName>
-    $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
-    
-    # Test if the registry key exists
-    if (-not (Test-Path $regPath)) {
-        Write-Error "Service '$ServiceName' does not appear to have a registry key at $regPath."
-        return $null
-    }
-    
-    # Get the registry value based on the provided parameter name
-    $regValue = Get-ItemProperty -Path $regPath -Name $ParameterName -ErrorAction Stop
-    
-    if (-not $regValue.$ParameterName) {
-        Write-Error "Parameter '$ParameterName' not found in registry for service '$ServiceName'."
-        return $null
-    }
-    
-    $encryptedBase64 = $regValue.$ParameterName
-
-    # Convert the base64 string to bytes
-    $encryptedBytes = [Convert]::FromBase64String($encryptedBase64)
-    
-    # Decrypt the bytes using DPAPI.
-    # Usually, you would encrypt using:
-    #  ProtectedData.Protect(plaintextBytes, $optionalEntropy, DataProtectionScope.LocalMachine)
-    # and then decrypt using the corresponding Unprotect call.
-    $decryptedBytes = [System.Security.Cryptography.ProtectedData]::Unprotect(
-                            $encryptedBytes, 
-                            $null, 
-                            [System.Security.Cryptography.DataProtectionScope]::LocalMachine
-                        )
-    $decryptedPassword = [System.Text.Encoding]::UTF8.GetString($decryptedBytes)
-    
-    return $decryptedPassword
+    $xmlDoc = New-Object -TypeName System.Xml.XmlDocument
+    $xmlDoc.Load($ConfigPath)
+} catch {
+    Write-Error "Failed to load XML: $_"
+    exit 1
 }
-catch {
-    Write-Error "An error occurred: $_"
-    return $null
+
+# Find QueryCache nodes
+$nodes = @()
+$node1 = $xmlDoc.SelectNodes("//*[@key='QueryCache']")
+$node2 = $xmlDoc.SelectNodes("//QueryCache")
+
+if ($node1) { $nodes += $node1 }
+if ($node2) { $nodes += $node2 }
+
+$nodes = $nodes | Where-Object { $_ -ne $null } | Select-Object -Unique
+
+if ($nodes.Count -eq 0) {
+    Write-Warning "No nodes found for QueryCache. No changes applied."
+} else {
+    foreach ($node in $nodes) {
+        # Prefer attribute 'value' if present (common for appSettings style)
+        $attr = $node.Attributes["value"]
+        if ($attr) {
+            $cur = $attr.Value
+            $newVal = $cur
+            if ($cur -like "*testfailover.com*") {
+                $newVal = $cur -replace "testfailover\.com", $targetServer
+            } elseif ($cur -like "*testfallback.com*") {
+                $newVal = $cur -replace "testfallback\.com", $targetServer
+            }
+            if ($newVal -ne $cur) {
+                $attr.Value = $newVal
+                Write-Host "Updated QueryCache value attribute: '$cur' -> '$newVal'"
+            }
+        } else {
+            # Fallback to inner text if no value attribute
+            $text = $node.InnerText
+            $newText = $text
+            if ($text -like "*testfailover.com*") {
+                $newText = $text -replace "testfailover\.com", $targetServer
+            } elseif ($text -like "*testfallback.com*") {
+                $newText = $text -replace "testfallback\.com", $targetServer
+            }
+            if ($newText -ne $text) {
+                $node.InnerText = $newText
+                Write-Host "Updated QueryCache inner text: '$text' -> '$newText'"
+            }
+        }
+    }
+
+    # Save changes
+    $xmlDoc.Save($ConfigPath)
+    Write-Host "QueryCache updated to use $targetServer."
 }
