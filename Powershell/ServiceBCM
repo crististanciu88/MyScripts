@@ -1,0 +1,165 @@
+Below is a PowerShell script that meets your steps. It stops a Windows service, backs up the config (only if a BCM backup doesnât already exist), updates the XML configuration to switch between testfailover.com and testfallback.com (based on the Mode you pass), restarts the service, and supports calling with either Failover or Fallback mode.
+
+How to use:
+- Run as Administrator.
+- Example to set to failover server:
+  .\Update-ServiceConfig.ps1 -Mode Failover -ServiceName "YourServiceName" -ConfigPath "C:\ProgramData\YourService\config.xml"
+- Example to set to fallback server:
+  .\Update-ServiceConfig.ps1 -Mode Fallback -ServiceName "YourServiceName" -ConfigPath "C:\ProgramData\YourService\config.xml"
+
+Code (save as Update-ServiceConfig.ps1):
+
+# Requires -RunAsAdministrator
+param(
+  [Parameter(Mandatory=$true)]
+  [ValidateSet("Failover","Fallback")]
+  [string]$Mode,
+
+  [Parameter(Mandatory=$true)]
+  [string]$ServiceName,
+
+  [Parameter(Mandatory=$true)]
+  [string]$ConfigPath
+)
+
+function Write-Log {
+  param([string]$Message)
+  $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+  Write-Output "[$ts] $Message"
+}
+
+function Wait-ServiceState {
+  param(
+    [string]$Name,
+    [ValidateSet("Running","Stopped","Paused")] [string]$DesiredState,
+    [int]$TimeoutSeconds = 120
+  )
+  $start = Get-Date
+  while ($true) {
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if (-not $svc) { throw "Service '$Name' not found." }
+    if ($svc.Status -eq $DesiredState) { return }
+    if ((Get-Date) - $start).TotalSeconds -gt $TimeoutSeconds) {
+      throw "Timed out waiting for service '$Name' to reach '$DesiredState'. Current: '$($svc.Status)'."
+    }
+    Start-Sleep -Seconds 2
+  }
+}
+
+# Validate config path
+if (-not (Test-Path -Path $ConfigPath)) {
+  Write-Log "Config file not found: $ConfigPath"
+  exit 1
+}
+
+# Backup (only if BCM backup doesn't already exist)
+$backupPath = "$ConfigPath.BCM.bak"
+if (-not (Test-Path -Path $backupPath)) {
+  try {
+    Copy-Item -Path $ConfigPath -Destination $backupPath -Force
+    Write-Log "Backup created: $backupPath"
+  } catch {
+    Write-Log "Failed to create backup: $_"
+    throw
+  }
+} else {
+  Write-Log "Backup already exists: $backupPath - skipping backup."
+}
+
+# Load XML
+try {
+  [xml]$xml = Get-Content -Path $ConfigPath -ErrorAction Stop
+} catch {
+  Write-Log "Failed to load XML: $_"
+  exit 2
+}
+
+# Determine replacement based on mode
+# Mode Failover -> ensure values are testfailover.com
+# Mode Fallback -> ensure values are testfallback.com
+$updated = $false
+$nodePaths = @(
+  "//QueryCache/value",
+  "//configuration/ModelMapService/QueryCache/value",
+  "//configuration/ModelMapService/key/QueryCache/value",
+  "//ModelMapService/QueryCache/value",
+  "//configuration/ModelMapService/value"
+)
+
+foreach ($path in $nodePaths) {
+  try {
+    $nodes = $xml.SelectNodes($path)
+    if ($null -ne $nodes) {
+      foreach ($node in $nodes) {
+        if ($node -and $node.InnerText) {
+          $text = $node.InnerText
+          if ($Mode -eq "Failover" -and $text -like "*testfallback.com*") {
+            $node.InnerText = $text -replace "testfallback.com","testfailover.com"
+            $updated = $true
+          } elseif ($Mode -eq "Fallback" -and $text -like "*testfailover.com*") {
+            $node.InnerText = $text -replace "testfailover.com","testfallback.com"
+            $updated = $true
+          }
+        }
+      }
+    }
+  } catch {
+    # Ignore path-specific errors and continue
+  }
+}
+
+if ($updated) {
+  try {
+    $xml.Save($ConfigPath)
+    Write-Log "Config updated and saved: $ConfigPath"
+  } catch {
+    Write-Log "Failed to save updated XML: $_"
+    exit 3
+  }
+} else {
+  Write-Log "No matching values found for mode '$Mode'. No changes made."
+}
+
+# Stop the service
+try {
+  $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+  if (-not $svc) {
+    Write-Log "Service '$ServiceName' not found."
+  } elseif ($svc.Status -ne 'Stopped') {
+    Write-Log "Stopping service '$ServiceName'..."
+    Stop-Service -Name $ServiceName -ErrorAction Stop
+    Wait-ServiceState -Name $ServiceName -DesiredState 'Stopped' -TimeoutSeconds 60
+    Write-Log "Service '$ServiceName' stopped."
+  } else {
+    Write-Log "Service '$ServiceName' is already stopped."
+  }
+} catch {
+  Write-Log "Error stopping service: $_"
+  exit 4
+}
+
+# Start the service
+try {
+  Write-Log "Starting service '$ServiceName'..."
+  Start-Service -Name $ServiceName -ErrorAction Stop
+  Wait-ServiceState -Name $ServiceName -DesiredState 'Running' -TimeoutSeconds 60
+  Write-Log "Service '$ServiceName' started."
+} catch {
+  Write-Log "Error starting service: $_"
+  exit 5
+}
+
+Write-Log "Done."
+
+Notes and considerations:
+- Backups: The script creates a backup named exactly ConfigPath.BCM.bak if it doesnât already exist. If you want timestamped backups in addition to BCM, you can adjust the backup naming.
+- XML paths: The script looks for value nodes under several common path variations for QueryCache/value. If your config uses a different structure, you can add the exact XPath to the $nodePaths array.
+- Mode behavior:
+  - Failover: Replaces any text containing testfallback.com with testfailover.com.
+  - Fallback: Replaces any text containing testfailover.com with testfallback.com.
+  This enables switching between the two servers as requested.
+- Execution context: Run with Administrator privileges since stopping/starting services requires elevated rights.
+- If the config file contains multiple QueryCache/value entries, all matching entries will be updated.
+
+If you want the script to toggle automatically (i.e., swap to the other server regardless of current value), I can adjust it to auto-detect the current server and flip to the other one.
+PS D:\MyScripts> 
