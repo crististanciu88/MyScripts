@@ -1,0 +1,1 @@
+az vmss list-instances -g <resource-group> -n <vmss-name> --query "[?contains(@.instanceView.statuses[*].code, 'PowerState/running')].instanceId" -o tsv
