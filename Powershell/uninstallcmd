@@ -1,0 +1,20 @@
+    try {
+        if ([string]::IsNullOrWhiteSpace($UninstallString)) {
+            throw "Uninstall string is null or empty."
+        }
+
+        # If no quiet switch is present, add a common MSI silent switch (/qn).
+        # Note: if the uninstall string already contains /q or /quiet we leave it alone.
+        if ($UninstallString -notmatch '(?i)(/q\b|/quiet\b)') {
+            $UninstallString = "$UninstallString /qn /norestart"
+        }
+
+        # Execute via cmd.exe, hidden, wait for completion, fail on error.
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $UninstallString -WindowStyle Hidden -Wait -ErrorAction Stop
+
+        Write-Output $true
+    }
+    catch {
+        Write-Error "Uninstall failed: $_"
+        return $false
+    }
