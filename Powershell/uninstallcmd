@@ -18,3 +18,79 @@
         Write-Error "Uninstall failed: $_"
         return $false
     }
+
+gpt5 Function:
+
+function Uninstall-MsiFromUninstallString {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$UninstallString
+    )
+
+    try {
+        # Normalize input
+        $cmd = $UninstallString.Trim()
+
+        # If the entire string is wrapped in quotes, strip the outer quotes
+        if ($cmd -match '^"(.*)"$') { $cmd = $Matches[1] }
+
+        # If this is an msiexec command, convert install to uninstall and ensure quiet flag
+        if ($cmd -match '(?i)msiexec') {
+            # Convert /I to /X (case-insensitive)
+            $cmd = $cmd -replace '(?i)/I\b', '/x'
+
+            # If no quiet/passive flags present, add /qn (silent)
+            if ($cmd -notmatch '(?i)(/qn|/quiet|/passive)') {
+                $cmd = $cmd + ' /qn'
+            }
+        }
+
+        Write-Verbose "Executing: cmd.exe /c $cmd"
+
+        # Run via cmd.exe and capture output and exit code
+        $output = & cmd.exe /c $cmd 2>&1
+        $exitCode = $LASTEXITCODE
+
+        if ($exitCode -ne 0) {
+            # Throw to be caught by catch block; include command output
+            throw "Uninstall command exited with code $exitCode.`nOutput:`n$([string]::Join("`n", $output))"
+        }
+
+        Write-Output "Uninstall completed successfully."
+        return $true
+    }
+    catch {
+        Write-Error "Uninstall failed: $_"
+        return $false
+    }
+}
+
+DeepSeek:
+function Uninstall-Software {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$UninstallString
+    )
+    
+    try {
+        Write-Host "Attempting to uninstall software..." -ForegroundColor Yellow
+        Write-Host "Uninstall command: $UninstallString" -ForegroundColor Gray
+        
+        # Execute the uninstall command silently
+        $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$UninstallString /quiet /norestart`"" -Wait -PassThru -NoNewWindow
+        
+        # Check the exit code
+        if ($process.ExitCode -eq 0) {
+            Write-Host "Software uninstalled successfully!" -ForegroundColor Green
+            return $true
+        }
+        else {
+            throw "Uninstall failed with exit code: $($process.ExitCode)"
+        }
+    }
+    catch {
+        Write-Error "Failed to uninstall software: $($_.Exception.Message)"
+        return $false
+    }
+}
