@@ -1,0 +1,75 @@
+Below is a Bash/az CLI snippet that does what you asked. It:
+- checks if a hostname exists on a Function App and adds it if missing
+- checks Key Vault certificates for a certificate with the provided thumbprint and, if found, imports & binds it to the hostname
+
+Notes:
+- You must be logged in (az login) and have RBAC + Key Vault access policy permissions (get/list for certificates/secrets) for these operations.
+- Importing a Key Vault certificate into an App Service requires the Key Vault resource id and the certificate name in Key Vault.
+- Replace the variable values at the top with your values.
+
+Script:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Parameters - replace these
+RG="myResourceGroup"
+APP="myFunctionApp"         # function app name
+HOSTNAME="example.contoso.com"
+KV_NAME="myKeyVault"
+THUMBPRINT="ABCDEF1234567890ABCDEF1234567890ABCDEF12"  # full hex thumbprint, case-insensitive
+
+# Normalize thumbprint (lowercase, remove spaces)
+THUMB_LOWER=$(echo "$THUMBPRINT" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+
+echo "Checking hostname on Function App..."
+if az functionapp config hostname list --name "$APP" --resource-group "$RG" -o tsv | grep -qx "$HOSTNAME"; then
+  echo "Hostname '$HOSTNAME' is already present on '$APP'."
+else
+  echo "Hostname '$HOSTNAME' not found â attempting to add..."
+  az functionapp config hostname add --name "$APP" --resource-group "$RG" --hostname "$HOSTNAME"
+  echo "Requested add of hostname '$HOSTNAME' (validate DNS ownership if required)."
+fi
+
+echo "Searching Key Vault '$KV_NAME' for certificate with thumbprint $THUMBPRINT..."
+# find the certificate name in Key Vault that has matching thumbprint
+cert_name=""
+for name in $(az keyvault certificate list --vault-name "$KV_NAME" --query "[].name" -o tsv); do
+  t=$(az keyvault certificate show --vault-name "$KV_NAME" --name "$name" --query "x509ThumbprintHex" -o tsv || true)
+  t_norm=$(echo "$t" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+  if [ -n "$t_norm" ] && [ "$t_norm" = "$THUMB_LOWER" ]; then
+    cert_name="$name"
+    break
+  fi
+done
+
+if [ -z "$cert_name" ]; then
+  echo "Certificate with thumbprint $THUMBPRINT not found in Key Vault '$KV_NAME'."
+  exit 0
+fi
+
+echo "Found certificate in Key Vault: $cert_name. Importing and binding to app..."
+
+# Get the Key Vault resource id (required by import)
+KV_ID=$(az keyvault show --name "$KV_NAME" --query "id" -o tsv)
+
+# Import certificate from Key Vault into App Service certificate store
+az webapp config ssl import \
+  --resource-group "$RG" \
+  --name "$APP" \
+  --key-vault "$KV_ID" \
+  --key-vault-certificate-name "$cert_name" \
+  --certificate-thumbprint "$THUMBPRINT"
+
+echo "Imported certificate. Now binding to hostname $HOSTNAME..."
+# Bind certificate to hostname (SNI)
+az webapp config ssl bind \
+  --resource-group "$RG" \
+  --name "$APP" \
+  --certificate-thumbprint "$THUMBPRINT" \
+  --ssl-type SNI \
+  --hostname "$HOSTNAME"
+
+echo "Certificate bound to $HOSTNAME on $APP."
+```
