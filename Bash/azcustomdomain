@@ -1,3 +1,30 @@
+Example variable:
+resourceId="/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/my-rg/providers/Microsoft.Web/sites/my-func-app"
+
+Option 1 â pure bash regex (robust, fast):
+if [[ $resourceId =~ /subscriptions/([^/]+)/resourceGroups/([^/]+)/providers/[^/]+/sites/([^/]+) ]]; then
+  subscription_id="${BASH_REMATCH[1]}"
+  resource_group="${BASH_REMATCH[2]}"
+  function_app="${BASH_REMATCH[3]}"
+else
+  echo "resource id did not match expected pattern" >&2
+fi
+
+Option 2 â awk (easy to read):
+subscription_id=$(awk -F'/' '{for(i=1;i<=NF;i++) if($i=="subscriptions") {print $(i+1); exit}}' <<<"$resourceId")
+resource_group=$(awk -F'/' '{for(i=1;i<=NF;i++) if($i=="resourceGroups") {print $(i+1); exit}}' <<<"$resourceId")
+function_app=$(awk -F'/' '{for(i=1;i<=NF;i++) if($i=="sites") {print $(i+1); exit}}' <<<"$resourceId")
+
+Option 3 â grep -Po (compact):
+subscription_id=$(grep -Po '(?<=/subscriptions/)[^/]+' <<<"$resourceId")
+resource_group=$(grep -Po '(?<=/resourceGroups/)[^/]+' <<<"$resourceId")
+function_app=$(grep -Po '(?<=/sites/)[^/]+' <<<"$resourceId")
+
+After any option, you can echo them:
+echo "subscription: $subscription_id"
+echo "resource group: $resource_group"
+echo "function app: $function_app"
+
 Below is a Bash/az CLI snippet that does what you asked. It:
 - checks if a hostname exists on a Function App and adds it if missing
 - checks Key Vault certificates for a certificate with the provided thumbprint and, if found, imports & binds it to the hostname
