@@ -1,0 +1,52 @@
+
+$bundlePath = "D:\home\site\wwwroot\ca-bundle.crt"   # path inside your app
+$targetHost = "myserver.example.com"                # host you want to trust with this bundle
+
+# load PEM cert blocks from the bundle file
+$bundleText = Get-Content $bundlePath -Raw
+$pemBlocks = ($bundleText -split "(?<=-----END CERTIFICATE-----)\s*") | Where-Object { $_ -match "BEGIN CERTIFICATE" }
+
+$cas = @()
+foreach ($pem in $pemBlocks) {
+    $b64 = ($pem -replace "-----BEGIN CERTIFICATE-----", "" -replace "-----END CERTIFICATE-----", "" -replace "\s+", "")
+    $cas += New-Object System.Security.Cryptography.X509Certificates.X509Certificate2([Convert]::FromBase64String($b64))
+}
+
+# create a validation callback that only applies to $targetHost and builds a chain using the CA(s) above
+$callback = {
+    param($sender, $cert, $chain, $sslPolicyErrors)
+
+    # only override validation for requests to the target host
+    $req = $sender -as [System.Net.HttpWebRequest]
+    if ($req -and $req.RequestUri.Host -ne $using:targetHost) {
+        return $sslPolicyErrors -eq [System.Net.Security.SslPolicyErrors]::None
+    }
+
+    $newChain = New-Object System.Security.Cryptography.X509Certificates.X509Chain
+    $newChain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+    # allow unknown CA because we'll provide the CA in ExtraStore
+    $newChain.ChainPolicy.VerificationFlags = [System.Security.Cryptography.X509Certificates.X509VerificationFlags]::AllowUnknownCertificateAuthority
+
+    foreach ($c in $using:cas) { $newChain.ChainPolicy.ExtraStore.Add($c) | Out-Null }
+
+    $serverCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($cert)
+    $isValid = $newChain.Build($serverCert)
+
+    if ($isValid) {
+        # ensure chain root is one of our provided CAs
+        $root = $newChain.ChainElements[$newChain.ChainElements.Count - 1].Certificate
+        foreach ($c in $using:cas) {
+            if ($root.Thumbprint -eq $c.Thumbprint) { return $true }
+        }
+    }
+    return $false
+}
+
+# set the global callback for the process
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = $callback
+
+# now make the request (example)
+Invoke-WebRequest -Uri "https://$targetHost/your/path" -UseBasicParsing
+
+# reset if you want to remove the override afterwards
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null
